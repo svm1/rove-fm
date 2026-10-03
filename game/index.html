@@ -68,7 +68,9 @@
     --body: "Barlow Semi Condensed", system-ui, sans-serif;
     --type: "Courier Prime", ui-monospace, monospace;   /* typewriter: details, numbers */
   }
-  * { box-sizing: border-box; }
+  /* No tap highlight: on touch screens it flashed the whole screen, since the globe canvas fills it
+     and takes taps. Buttons get a press effect instead (below). */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; color: var(--text); font: 16px/1.45 var(--body); overflow: hidden;
     background: radial-gradient(ellipse at 50% 70%, #241911 0%, var(--bg) 65%); }
   /* Film grain over everything; it never takes clicks. */
@@ -124,6 +126,7 @@
     border-radius: 999px; padding: 7px 16px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--glow); }
   button:focus-visible, select:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+  button:active:not(:disabled) { transform: scale(0.96); }
   button:disabled { opacity: 0.45; cursor: default; }
   button.primary { background: var(--airmail-red); border-color: #e0695d; color: #fff4e2; letter-spacing: 0.03em; }
   /* Play: a bakelite knob. */
