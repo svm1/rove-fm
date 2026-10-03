@@ -499,6 +499,13 @@ function borderLines(features) {
   return lines;
 }
 
+// Camera altitude (in globe radii) at the start. Desktop starts closer than globe.gl's default
+// (2.5): the globe fills more of its region, and borders flicker less than when zoomed far out;
+// the reveal pulls back to 1.9. A phone's region is narrow and tall, so 1.4 made the globe 167%
+// of the screen width; phones use PHONE_ALTITUDE (109%) for the start and the reveal alike.
+const PHONE_ALTITUDE = 2.5;
+function startAltitude() { return phone.matches ? PHONE_ALTITUDE : 1.4; }
+
 // Create the globe: country shapes, borders, hover labels, click-to-select, slow auto-rotation.
 function initGlobe() {
   readColors();
@@ -554,9 +561,7 @@ function initGlobe() {
   // upscaled the canvas and the borders looked fuzzy. The extra pixels are offset by the
   // border layer drawing only land borders (209 lines instead of ~1,600 outlines).
   world.renderer().setPixelRatio(Math.min(devicePixelRatio, 2));
-  // Start closer than globe.gl's default (altitude 2.5): the globe fills more of its region,
-  // and borders flicker less than when zoomed far out. Closer than the reveal view (1.9).
-  world.pointOfView({ altitude: 1.4 });
+  world.pointOfView({ altitude: startAltitude() });
   world.controls().autoRotate = true;
   world.controls().autoRotateSpeed = 0.35;
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
@@ -693,7 +698,7 @@ function finishRound(guessCode) {
         .arcDashLength(0.5).arcDashGap(0.15).arcDashAnimateTime(1800);
     }
     world.controls().autoRotate = false;
-    world.pointOfView({ lat: ans.lat, lng: ans.lng, altitude: 1.9 }, 1200);
+    world.pointOfView({ lat: ans.lat, lng: ans.lng, altitude: phone.matches ? PHONE_ALTITUDE : 1.9 }, 1200);
   }
   refreshGlobe();
 
