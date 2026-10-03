@@ -86,6 +86,10 @@
   /* Fascinate Inline's inline closes up below ~26px or under a strong glow, hence the size. */
   h1 { font: 400 34px/1 var(--title); margin: 0 0 4px; color: #ffcf7a; text-shadow: 0 0 12px rgba(255, 179, 71, 0.22); }
   .sub { color: var(--muted); font-size: 14px; }
+  /* "alpha preview": a small rubber stamp beside the wordmark (under it on phones). */
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .badge { flex: none; font: 700 10px/1 var(--type); letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap;
+    color: #ff8a7d; border: 1.5px solid currentColor; border-radius: 3px; padding: 4px 6px 3px; transform: rotate(-4deg); opacity: 0.9; }
   #round-label { font: 13px var(--type); letter-spacing: 0.06em; text-transform: uppercase; }
   .rx-right { display: flex; align-items: center; gap: 12px; }
 
@@ -205,6 +209,8 @@
     #panel { display: contents; }
     .rx-top { order: 1; flex: none; flex-wrap: nowrap; gap: 8px; padding: 10px 14px 8px; }
     h1 { font-size: 26px; white-space: nowrap; margin: 0; }
+    .brand { flex-direction: column; align-items: flex-start; gap: 3px; }
+    .badge { font-size: 8px; padding: 2px 4px 1px; transform: rotate(-2deg); }
     #round-label { display: none; }
     .rx-right { position: relative; gap: 8px; margin-left: auto; }
     #menu { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; color: var(--muted); }
@@ -284,7 +290,7 @@
 <div id="panel">
   <div class="rx-top">
     <div>
-      <h1>rove.FM</h1>
+      <div class="brand"><h1>rove.FM</h1><span class="badge">alpha preview</span></div>
       <div class="sub" id="round-label">&nbsp;</div>
     </div>
     <div class="rx-right">
