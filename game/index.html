@@ -1,0 +1,832 @@
+<!doctype html>
+<!--
+  rove.FM ("where's this song from?"): the playable page for the daily puzzles.
+
+  Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 5 rounds. In each
+  round the player listens to a song, whose YouTube player is covered until the guess,
+  and clicks the country on a spinnable globe. Score: 5,000 for the right country, else
+  5000 × e^(−km / 2000) between country centre points.
+
+  Run: `python3 -m http.server 8000` in the repo folder, then open http://localhost:8000/game/.
+  Loads d3 and globe.gl from jsDelivr, the Natural Earth 1:50m country shapes, fonts from
+  Google Fonts, and the YouTube IFrame API, so it needs an internet connection. No build step.
+
+  Look: "Bakelite & Airmail" (design/sketchbook.html): the game box is a 1950s radio, the
+  reveal an airmail postcard, the day's rounds a row of stamps.
+
+  Page layout: on desktop the game box is centred at the top and the globe fills its own
+  region below it, so it can never overlap the box. On phones (max-width: 640px) the globe
+  sits between a slim header and the radio as a dock at the bottom.
+
+  Script layout: geography (map data -> clickable countries, distances, scoring),
+  globe (drawing, hover, clicks), YouTube (player), rounds (guess -> reveal -> next),
+  phone layout (reveal animation, player placement), puzzles (loading a day, start-up).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rove.FM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600&family=Courier+Prime:wght@400;700&family=Fascinate+Inline&family=Righteous&display=swap">
+<style>
+  /* Look: "Bakelite & Airmail" (design/sketchbook.html, direction A). The game box is a 1950s
+     walnut radio with an amber-lit dial, the globe an atlas, the reveal an airmail postcard,
+     and the day's rounds a row of stamps. */
+  :root {
+    /* The one place colours are defined; the globe script reads these too (css()). */
+    --bg: #15100c;               /* walnut, the room */
+    --panel-top: #3a2618;        /* bakelite cabinet, gradient top to bottom */
+    --panel-bottom: #24170f;
+    --rim: #5a3d27;              /* cabinet edges, borders */
+    --surface: #2c1d13;          /* inset controls */
+    --text: #f1e3c6;             /* cream */
+    --muted: #b59c7b;
+    --glow: #ffb347;             /* dial amber: lamp, needle, atmosphere */
+    --dial: #f3d58f;             /* the lit dial face */
+    --dial-ink: #3b2414;
+    --airmail-red: #c8453a;      /* main buttons */
+    --airmail-blue: #2f5f9e;
+    --paper: #f3e7cc;            /* postcards, stamps */
+    --paper-ink: #2c2117;
+    --hover: #9a7348;            /* a country under the cursor */
+    --selected: #c8453a;         /* your pick, before and after the guess */
+    --good: #ffb347;             /* the answer */
+    --bad: #c8453a;              /* a wrong guess */
+    --land: #4a3726;
+    --land-edge: #2a1e14;
+    --ocean: #1d1611;
+    --grid: #f1e3c6;             /* the atlas lat/long grid (drawn faintly) */
+    --card-tilt: -0.8deg;        /* the postcard's resting angle (phones tilt it the other way) */
+    --title: "Fascinate Inline", Georgia, serif;   /* the wordmark: Art Deco with an inline */
+    --display: "Righteous", system-ui, sans-serif; /* country names, hover labels, stamps */
+    --body: "Barlow Semi Condensed", system-ui, sans-serif;
+    --type: "Courier Prime", ui-monospace, monospace;   /* typewriter: details, numbers */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; color: var(--text); font: 16px/1.45 var(--body); overflow: hidden;
+    background: radial-gradient(ellipse at 50% 70%, #241911 0%, var(--bg) 65%); }
+  /* Film grain over everything; it never takes clicks. */
+  body::after { content: ""; position: fixed; inset: 0; z-index: 10; pointer-events: none; opacity: 0.16; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+  /* Layout: the game box on top, the globe in its own region filling the rest.
+     They're separate boxes, so the globe (however far you zoom) can't overlap the game box. */
+  body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  #panel { flex: none; position: relative; z-index: 1; width: min(780px, calc(100% - 24px)); margin: 14px auto 0;
+    max-height: 52vh; overflow: auto; background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+    border: 1px solid var(--rim); border-radius: 18px; padding: 14px 18px 16px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+  #globe-area { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+  #globe { position: absolute; inset: 0; }
+
+  /* The cabinet top: wordmark and round on the left; stamps and the date on the right. */
+  .rx-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  /* Fascinate Inline's inline closes up below ~26px or under a strong glow, hence the size. */
+  h1 { font: 400 34px/1 var(--title); margin: 0 0 4px; color: #ffcf7a; text-shadow: 0 0 12px rgba(255, 179, 71, 0.22); }
+  .sub { color: var(--muted); font-size: 14px; }
+  #round-label { font: 13px var(--type); letter-spacing: 0.06em; text-transform: uppercase; }
+  .rx-right { display: flex; align-items: center; gap: 12px; }
+
+  /* The dial: shortwave bands over a tick scale, lit from behind. The needle
+     moves to a new spot each round (tuning in). The lamp by the timer glows while a song plays. */
+  .dial { position: relative; height: 42px; margin-top: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--rim);
+    background: radial-gradient(ellipse at 50% 130%, #fff1c9 0%, var(--dial) 45%, #c99a4c 100%);
+    display: grid; grid-template-rows: 1fr auto; padding: 5px 14px 4px; }
+  .dial-row { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap;
+    font: 700 10.5px var(--type); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dial-ink); }
+  .dial-row.bands { align-self: start; }
+  .ticks { height: 8px; opacity: 0.55; background: repeating-linear-gradient(90deg, var(--dial-ink) 0 1px, transparent 1px 9px); }
+  .needle { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: var(--airmail-red);
+    box-shadow: 0 0 6px 1px rgba(200, 69, 58, 0.6); transition: left 1.4s cubic-bezier(0.3, 1.5, 0.5, 1); }
+  .lamp { width: 9px; height: 9px; border-radius: 50%; background: #5e4329; flex: none;
+    transition: background 0.3s, box-shadow 0.3s; }
+  .lamp.on { background: var(--glow); box-shadow: 0 0 10px 3px var(--glow); }
+
+  /* Inside the game box: video on the left, controls and results on the right. */
+  #play-area { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; margin-top: 14px; }
+  #play-area[hidden] { display: none; }
+  #summary { margin-top: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .spread { justify-content: space-between; }
+
+  /* Buttons share the display face (Righteous) so they match the country names and stamps. */
+  button, select { font: 400 15px var(--display); color: var(--text); background: var(--surface); border: 1px solid var(--rim);
+    border-radius: 999px; padding: 7px 16px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--glow); }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--airmail-red); border-color: #e0695d; color: #fff4e2; letter-spacing: 0.03em; }
+  /* Play: a bakelite knob. */
+  #play { background: radial-gradient(circle at 35% 30%, #c98a55, #6b3f22 70%); border-color: #8a5a36; color: #fff4e2; }
+  select { font: 13px var(--type); padding: 5px 10px; border-radius: 6px; }
+
+  #player-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
+    background: #000; border: 1px solid var(--rim); }
+  #player-wrap iframe, #player { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* The cover is the radio's speaker grille until you guess. */
+  #cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 2px; color: var(--muted); font: 13px var(--type); text-align: center; padding: 12px;
+    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px),
+                radial-gradient(ellipse at 50% 40%, #4a3020, #1e140d 80%); }
+  #cover[hidden] { display: none; }
+  #cover .note { font: 400 34px var(--display); color: var(--glow); text-shadow: 0 0 14px rgba(255, 179, 71, 0.5); }
+  #time { font: 14px var(--type); font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  #pick { margin: 10px 0 12px; min-height: 22px; }
+  #pick b { color: #ff8a7d; }
+  .msg { color: #ff8a7d; font-size: 14px; margin-top: 8px; }
+
+  /* The reveal: an airmail postcard with typewritten liner notes, laid on the globe's region
+     (right side; at the bottom on phones) so the game box doesn't grow. */
+  .postcard { position: absolute; z-index: 2; top: 18px; right: 22px; width: min(360px, calc(100% - 32px));
+    background: var(--paper); color: var(--paper-ink); padding: 12px 14px; display: grid; gap: 8px;
+    border: 8px solid transparent; transform: rotate(var(--card-tilt)); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    border-image: repeating-linear-gradient(-45deg, var(--airmail-red) 0 11px, var(--paper) 11px 16px,
+                  var(--airmail-blue) 16px 27px, var(--paper) 27px 32px) 8; }
+  .postcard:empty { display: none; }
+  .pc-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .pc-from { font: 400 26px/1.05 var(--display); }
+  .pc-from small { display: block; font: 700 11px var(--type); letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.7; margin-bottom: 3px; }
+  .par-avion { flex: none; font: 700 11px var(--type); letter-spacing: 0.14em; text-transform: uppercase; color: var(--paper);
+    background: var(--airmail-blue); padding: 3px 7px; transform: rotate(-3deg); }
+  .notes { display: grid; gap: 1px; font: 14px/1.4 var(--type); border-top: 1px dashed currentColor; padding-top: 8px; }
+  .notes .song { font-size: 16px; font-weight: 700; }
+  .pc-score { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    font: 13px var(--type); border-top: 1px dashed currentColor; padding-top: 8px; }
+  .pc-score b { font: 700 22px var(--type); }
+  .pc-score .of { font-size: 13px; opacity: 0.6; }
+  .postcard a { color: var(--airmail-blue); font: 700 13px var(--type); text-underline-offset: 3px; }
+
+  /* Stamps: one per round, perforated, with the country code and points. */
+  .stamps { display: flex; gap: 6px; }
+  .stamp { width: 34px; height: 40px; display: grid; place-content: center; text-align: center; flex: none;
+    font: 9px/1.1 var(--type); color: var(--muted); border: 1px dashed var(--rim); border-radius: 3px; }
+  .stamp.now { border-color: var(--glow); color: var(--glow); }
+  .stamp.done { border: 0; border-radius: 0; background: var(--paper); color: var(--airmail-red);
+    box-shadow: inset 0 0 0 4px var(--paper), inset 0 0 0 5px var(--airmail-red);
+    -webkit-mask: radial-gradient(circle, transparent 1.6px, #000 2px) -3px -3px / 6px 6px,
+                  linear-gradient(#000, #000) center / calc(100% - 6px) calc(100% - 6px) no-repeat;
+            mask: radial-gradient(circle, transparent 1.6px, #000 2px) -3px -3px / 6px 6px,
+                  linear-gradient(#000, #000) center / calc(100% - 6px) calc(100% - 6px) no-repeat; }
+  .stamp .cc { font: 400 14px/1 var(--display); }
+  .stamp.skipped { color: var(--muted); background: #cbbd9f; }
+  /* The end-of-day passport page shows bigger stamps. */
+  .passport .stamps { gap: 10px; flex-wrap: wrap; }
+  .passport .stamp { width: 62px; height: 72px; font-size: 11px; }
+  .passport .stamp .cc { font-size: 22px; }
+
+  .total { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .total .big { font: 700 30px var(--type); color: #ffcf7a; }
+  .total .big .of { font-size: 15px; color: var(--muted); font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 14px; }
+  td { padding: 6px 2px; border-bottom: 1px dashed var(--rim); vertical-align: top; }
+  td.num { text-align: right; font: 14px var(--type); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* globe.gl wraps labels in its own grey box; hide it so only .tip shows. The id outranks
+     the library's stylesheet, which it adds after this one. */
+  #globe .float-tooltip-kap { background: none; padding: 0; border-radius: 0; }
+  .tip { background: var(--dial); color: var(--dial-ink); border-radius: 999px; padding: 3px 12px 4px;
+    font: 400 16px var(--display); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-family: var(--type); pointer-events: none; }
+  /* Phone-only pieces, hidden on desktop. */
+  #menu, #mapbtn, .pc-video, .postmark { display: none; }
+
+  /* ---------- Phone layout (design/sketchbook.html, "Phone layouts") ----------
+     Everything phone-specific is in this block, so desktop is untouched. A slim header with the
+     wordmark and stamps; the globe in the middle; the radio as a dock at the bottom, in thumb
+     reach. #panel dissolves (display: contents) so its header and radio can sit at either end.
+     The reveal postcard slams onto the globe, with the video in it: the YouTube player can't
+     move in the page (that reloads it), so it is positioned over the card's video slot. */
+  @media (max-width: 640px) {
+    :root { --card-tilt: 1.2deg; }
+    #panel { display: contents; }
+    .rx-top { order: 1; flex: none; flex-wrap: nowrap; gap: 8px; padding: 10px 14px 8px; }
+    h1 { font-size: 26px; white-space: nowrap; margin: 0; }
+    #round-label { display: none; }
+    .rx-right { position: relative; gap: 8px; margin-left: auto; }
+    #menu { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; color: var(--muted); }
+    #date { display: none; position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; font-size: 15px; padding: 8px 10px; }
+    body.menu-open #date { display: block; }
+    .stamps { gap: 4px; }
+    .stamp { width: 22px; height: 26px; font-size: 8px; }
+    .stamp > div { font-size: 0; }
+    .stamp .cc { font-size: 10px; }
+    .stamp.done { box-shadow: inset 0 0 0 2.5px var(--paper), inset 0 0 0 3.5px var(--airmail-red);
+      -webkit-mask: radial-gradient(circle, transparent 1.1px, #000 1.5px) -2px -2px / 4px 4px,
+                    linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 4px) no-repeat;
+              mask: radial-gradient(circle, transparent 1.1px, #000 1.5px) -2px -2px / 4px 4px,
+                    linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 4px) no-repeat; }
+    .stamp.done.skipped { box-shadow: inset 0 0 0 2.5px #cbbd9f, inset 0 0 0 3.5px var(--muted); }
+    .passport .stamp { width: 46px; height: 54px; }
+    .passport .stamp > div { font-size: 9px; }
+    .passport .stamp .cc { font-size: 16px; }
+
+    #globe-area { order: 2; }
+    #radio { order: 3; flex: none; position: relative; max-height: 72vh; overflow: auto;
+      padding: 12px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+      background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+      border-top: 1px solid var(--rim); border-radius: 22px 22px 0 0;
+      box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+    .dial { height: 26px; margin-top: 0; padding: 3px 10px 3px; border-radius: 7px; }
+    .dial-row { font-size: 8.5px; }
+    .ticks { height: 5px; background: repeating-linear-gradient(90deg, var(--dial-ink) 0 1px, transparent 1px 6px); }
+    #play-area { display: block; margin-top: 10px; }
+    #controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    #controls .row { display: contents; }
+    #play { width: 46px; height: 46px; padding: 0; flex: none; font-size: 15px; }
+    #play .lbl { display: none; }
+    #skip { padding: 11px 14px; flex: none; }
+    #guess { width: auto !important; flex: 1; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #pick { display: none; }
+    #error { flex-basis: 100%; margin-top: 0; }
+    body.revealed #skip, body.revealed #time, body.revealed #lamp { display: none; }
+    body.revealed #mapbtn { display: block; flex: none; padding: 11px 14px; }
+
+    /* Before the guess the player is hidden behind the page (it only needs to play sound);
+       after it, placePlayer() lays it over the postcard's video slot. */
+    #player-wrap { position: fixed; z-index: -1; left: 0; bottom: 0; width: 200px; height: 113px; border-radius: 6px; }
+    body.player-on-card #player-wrap { z-index: 8; transform: translate(-50%, -50%) rotate(var(--card-tilt)); }
+
+    .postcard { top: 12px; left: 12px; right: 12px; width: auto; padding: 14px 14px 12px;
+      transform: rotate(var(--card-tilt)); box-shadow: 0 22px 50px rgba(0, 0, 0, 0.6);
+      transition: opacity 0.25s, transform 0.25s; }
+    body.map-view .postcard { opacity: 0; transform: translateY(-30px) rotate(var(--card-tilt)); pointer-events: none; }
+    .pc-video { display: block; aspect-ratio: 16 / 9; border-radius: 6px; background: #1e140d; }
+    .postmark { display: grid; place-items: center; position: absolute; right: 12px; top: 40px; width: 74px; height: 74px;
+      border-radius: 50%; border: 2px solid rgba(47, 95, 158, 0.55); text-align: center; pointer-events: none;
+      font: 700 8px/1.35 var(--type); letter-spacing: 0.1em; color: rgba(47, 95, 158, 0.75); transform: rotate(-14deg); }
+    .postcard.slam .postmark { animation: thunk 0.3s 0.45s ease-out both; }
+  }
+  /* The reveal postcard slams onto the globe, which jolts as it lands (all screen sizes). */
+  .postcard.slam { animation: slam 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
+  #globe-area.jolt { animation: jolt 0.3s 0.25s ease-out; }
+  @keyframes slam {
+    0% { opacity: 0; transform: translateY(-40px) scale(1.3) rotate(-8deg); }
+    60% { opacity: 1; transform: scale(0.96) rotate(var(--card-tilt)); }
+    80% { transform: scale(1.02) rotate(var(--card-tilt)); }
+    100% { transform: rotate(var(--card-tilt)); }
+  }
+  @keyframes thunk {
+    from { opacity: 0; transform: scale(1.8) rotate(-14deg); }
+    to { opacity: 1; transform: rotate(-14deg); }
+  }
+  @keyframes jolt { 0%, 100% { transform: none; } 30% { transform: translateY(4px); } 60% { transform: translateY(-2px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .needle { transition: none; }
+    .postcard.slam, .postcard.slam .postmark, #globe-area.jolt { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="rx-top">
+    <div>
+      <h1>rove.FM</h1>
+      <div class="sub" id="round-label">&nbsp;</div>
+    </div>
+    <div class="rx-right">
+      <div id="stamps" class="stamps" aria-label="Today's rounds"></div>
+      <select id="date" aria-label="Puzzle date"></select>
+      <button id="menu" class="menu" type="button" aria-label="Choose a day" aria-expanded="false">⋯</button>
+    </div>
+  </div>
+  <div id="radio">
+  <!-- Decoration: the real shortwave broadcast bands, as on old dials. No place names: they'd read as hints. -->
+  <div class="dial" aria-hidden="true">
+    <div class="dial-row bands"><span>49 m</span><span>41 m</span><span>31 m</span><span>25 m</span><span>19 m</span><span>16 m</span></div>
+    <div class="ticks"></div>
+    <div id="needle" class="needle"></div>
+  </div>
+  <div id="play-area">
+    <div id="player-wrap">
+      <div id="player"></div>
+      <div id="cover"><div class="note">♪</div><div>Hidden until you guess</div></div>
+    </div>
+    <div id="controls">
+      <div class="row spread">
+        <div class="row">
+          <button id="play" class="primary" disabled><span class="ico">▶</span><span class="lbl"> Play</span></button>
+          <span id="time">0:00</span>
+          <span id="lamp" class="lamp" title="On air"></span>
+        </div>
+        <button id="skip" title="Give up on this round (0 points)" disabled>Skip</button>
+        <button id="mapbtn" type="button">Show map</button>
+      </div>
+      <div id="pick" class="sub">Spin the globe and click the country you think this song is from.</div>
+      <button id="guess" class="primary" style="width:100%" disabled>Guess</button>
+      <div id="error" class="msg"></div>
+    </div>
+  </div>
+  <div id="summary" hidden></div>
+  </div>
+</div>
+
+<div id="globe-area">
+  <div id="globe"></div>
+  <div id="loading">Loading the globe…</div>
+  <div id="result" class="postcard" aria-live="polite"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/globe.gl@2"></script>
+<script>
+const GEOJSON = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_0_countries.geojson";
+const PUZZLES = "../puzzles/";
+const MAX_POINTS = 5000;
+const SCALE_KM = 2000; // points fall to ~37% at 2,000 km
+
+// French overseas departments are drawn as part of France; split them into their own countries.
+const OVERSEAS = { GF: [-53.1, 3.9, "French Guiana"], GP: [-61.5, 16.2, "Guadeloupe"],
+                   MQ: [-61.0, 14.6, "Martinique"], RE: [55.5, -21.1, "Réunion"], YT: [45.1, -12.8, "Mayotte"] };
+// Everyday names where Natural Earth's NAME_LONG is the formal one ("Russian Federation"). They
+// match picking.country_name, which names the countries in the puzzle files.
+const NAMES = { RU: "Russia", KR: "South Korea", KP: "North Korea", LA: "Laos", BN: "Brunei",
+                SZ: "Eswatini", CV: "Cabo Verde", CD: "DR Congo", CG: "Congo", CZ: "Czechia",
+                FM: "Micronesia", GM: "Gambia", FK: "Falkland Islands", FO: "Faroe Islands",
+                VA: "Vatican City", TR: "Türkiye" };
+// Areas Natural Earth doesn't give an ISO code, mapped to the country they belong to.
+const NO_CODE = { CYN: "CY", SOL: "SO" };
+
+const $ = id => document.getElementById(id);
+// All page state: country shapes (and by ISO code), the hovered and selected country,
+// the loaded puzzle, the current round, results so far, and the YouTube player.
+const S = {
+  features: [], byCode: new Map(), hover: null, selected: null, dragging: false,
+  puzzle: null, round: 0, results: [], answered: false,
+  player: null, playerReady: false, ytReady: false,
+};
+
+// ---------- geography ----------
+// ISO 3166-1 alpha-2 code for a Natural Earth country (Norway, France and Kosovo only have
+// it in ISO_A2_EH), or the code of the country it belongs to (NO_CODE), or null.
+function isoCode(p) {
+  const ok = c => /^[A-Z]{2}$/.test(c || "");
+  if (ok(p.ISO_A2_EH)) return p.ISO_A2_EH;
+  if (ok(p.ISO_A2)) return p.ISO_A2;
+  return NO_CODE[p.ADM0_A3] || null;
+}
+
+// d3 wants clockwise exterior rings; GeoJSON files often use the opposite order,
+// which d3 reads as "everything except this country". Flip those.
+function rewind(geometry) {
+  const polys = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  for (const poly of polys) {
+    if (d3.geoArea({ type: "Polygon", coordinates: poly }) > 2 * Math.PI) poly.forEach(r => r.reverse());
+  }
+  return geometry;
+}
+
+// A clickable country: its shape, code, display name and centre point (lat/lng).
+function makeFeature(code, name, geometry) {
+  const f = { type: "Feature", geometry, properties: { code, name } };
+  const [lng, lat] = d3.geoCentroid(f);
+  f.properties.lng = lng; f.properties.lat = lat;
+  return f;
+}
+
+// Fetch the map, turn every shape into a clickable country (splitting the French overseas
+// departments out of France), and index them by ISO code in S.byCode.
+async function loadCountries() {
+  const data = await (await fetch(GEOJSON)).json();
+  const out = [];
+  for (const f of data.features) {
+    const p = f.properties, code = isoCode(p), geom = rewind(f.geometry);
+    if (code === "FR" && geom.type === "MultiPolygon") {
+      const mainland = [];
+      for (const poly of geom.coordinates) {
+        // Nearest department within 400 km (Guadeloupe and Martinique are only ~180 km apart).
+        const c = d3.geoCentroid({ type: "Polygon", coordinates: poly });
+        const [hit, km] = Object.entries(OVERSEAS)
+          .map(([k, [x, y, name]]) => [[k, name], d3.geoDistance(c, [x, y]) * 6371])
+          .sort((a, b) => a[1] - b[1])[0];
+        if (km < 400) out.push(makeFeature(hit[0], hit[1], { type: "Polygon", coordinates: poly }));
+        else mainland.push(poly);
+      }
+      out.push(makeFeature("FR", p.NAME_LONG, { type: "MultiPolygon", coordinates: mainland }));
+    } else {
+      const feature = makeFeature(code, NAMES[code] || p.NAME_LONG || p.NAME, geom);
+      feature.properties.borrowedCode = Boolean(NO_CODE[p.ADM0_A3]);
+      out.push(feature);
+    }
+  }
+  S.features = out;
+  // A country's own shape wins over a mapped one (Cyprus over Northern Cyprus).
+  const own = f => !f.properties.borrowedCode;
+  for (const f of [...out.filter(own), ...out.filter(f => !own(f))]) {
+    if (f.properties.code && !S.byCode.has(f.properties.code)) S.byCode.set(f.properties.code, f);
+  }
+}
+
+// Great-circle distance between two centre points, in km.
+function distanceKm(a, b) {
+  return d3.geoDistance([a.lng, a.lat], [b.lng, b.lat]) * 6371;
+}
+
+// { km, points } for a guessed country code against the answer's centre point.
+function score(guessCode, answer) {
+  if (guessCode === answer.code) return { km: 0, points: MAX_POINTS };
+  const km = distanceKm(S.byCode.get(guessCode).properties, answer);
+  return { km, points: Math.round(MAX_POINTS * Math.exp(-km / SCALE_KM)) };
+}
+
+// ---------- globe ----------
+let world;  // the globe.gl instance
+// Colours come from the CSS variables in <style>, so the palette is defined once.
+// Read once at start-up; landColor runs for every country on every refresh.
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const C = {};
+function readColors() {
+  for (const k of ["glow", "good", "bad", "selected", "hover", "land", "land-edge", "ocean", "grid"]) C[k] = css(`--${k}`);
+}
+
+// Colour of a country: after a guess, amber = answer and red = your wrong guess;
+// before, red = selected and light brown = hovered.
+function landColor(f) {
+  if (S.answered) {
+    if (f.properties.code === currentRound().country) return C.good;
+    if (f === S.selected) return C.bad;
+  }
+  if (f === S.selected) return C.selected;
+  if (f === S.hover) return C.hover;
+  return C.land;
+}
+
+// Re-apply colours after hover, selection or reveal changes. Only colours change:
+// globe.gl rebuilds a country's 3D shape when its altitude changes, which is expensive
+// for detailed shapes, so every country keeps the same altitude.
+function refreshGlobe() {
+  world.polygonCapColor(landColor);
+}
+
+// The land borders between countries, as lines. Coastlines are left out: the land/ocean
+// contrast already shows them, and their dense, jagged detail shimmers when zoomed out (they
+// were ~75% of all border segments). Natural Earth stores a shared border identically in
+// both countries, so a border is an edge that appears twice; each is drawn once.
+// Edges along the antimeridian are left out too: Natural Earth cuts shapes there, and
+// drawing the cut puts a line across the land (Chukotka).
+function borderLines(features) {
+  const rings = features.flatMap(f =>
+    (f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates).flat());
+  const key = (a, b) => { const x = a.join(), y = b.join(); return x < y ? x + "|" + y : y + "|" + x; };
+  const count = new Map();
+  for (const r of rings) for (let i = 1; i < r.length; i++) {
+    const k = key(r[i - 1], r[i]);
+    count.set(k, (count.get(k) || 0) + 1);
+  }
+  const cut = (a, b) => Math.abs(a[0]) === 180 && Math.abs(b[0]) === 180;
+  const drawn = new Set(), lines = [];
+  for (const r of rings) {
+    let line = [];
+    for (let i = 1; i < r.length; i++) {
+      const k = key(r[i - 1], r[i]);
+      if (count.get(k) === 2 && !drawn.has(k) && !cut(r[i - 1], r[i])) {
+        drawn.add(k);
+        if (!line.length) line.push(r[i - 1]);
+        line.push(r[i]);
+      } else if (line.length) { lines.push(line); line = []; }
+    }
+    if (line.length) lines.push(line);
+  }
+  return lines;
+}
+
+// Create the globe: country shapes, borders, hover labels, click-to-select, slow auto-rotation.
+function initGlobe() {
+  readColors();
+  const area = $("globe-area");
+  world = Globe()($("globe"))
+    .width(area.clientWidth).height(area.clientHeight)
+    // Transparent, so the page's warm background shows around the globe.
+    .backgroundColor("rgba(0,0,0,0)")
+    .showAtmosphere(true).atmosphereColor(C.glow).atmosphereAltitude(0.16)
+    // The atlas grid (every 10°). It sits at sea level, so it shows on the ocean only.
+    .showGraticules(true)
+    .polygonsData(S.features)
+    // Performance: a flat, constant altitude, no side walls (null skips their geometry),
+    // no transitions.
+    // Curvature: each country's surface is flat triangles, which sag below the sphere. Where
+    // they sag more than the land's height (0.006 × radius 100 = 0.6) the ocean shows through
+    // as a dark wedge. A country less than r degrees across gets no interior points, so long
+    // slivers span it: r = 7 sank Greenland (0.36 below) and Turkey (0.09); r = 3 sinks no
+    // country and takes about as long to build (the triangle count rises ~2%).
+    .polygonAltitude(0.006)
+    .polygonSideColor(() => null)
+    .polygonCapCurvatureResolution(3)
+    .polygonsTransitionDuration(0)
+    // Borders are their own line layer (borderLines), so no outline on the shapes.
+    .polygonStrokeColor(() => null)
+    .pathsData(borderLines(S.features))
+    .pathPointLat(p => p[1]).pathPointLng(p => p[0]).pathPointAlt(0.0061)
+    .pathColor(() => C["land-edge"])
+    .pathTransitionDuration(0)
+    // Borders are drawn over the countries; let hovers and clicks reach the country below.
+    .pointerEventsFilter(obj => obj.__globeObjType !== "path")
+    .polygonLabel(f => `<div class="tip">${f.properties.name}</div>`)
+    .onPolygonHover(f => {
+      // Countries slide under the cursor while the globe turns; don't recolour mid-drag.
+      if (S.dragging || f === S.hover) return;
+      S.hover = f;
+      document.body.style.cursor = f ? "pointer" : null;
+      refreshGlobe();
+    })
+    .onPolygonClick(f => {
+      if (!S.puzzle || S.answered || !f.properties.code) return;
+      S.selected = f;
+      $("pick").innerHTML = `Your guess: <b>${f.properties.name}</b>`;
+      $("guess").disabled = false;
+      refreshGlobe();
+    });
+  world.globeMaterial().color.set(C.ocean);
+  // globe.gl draws the grid light grey; tint it cream. It's the scene's only LineSegments.
+  world.scene().traverse(o => {
+    if (o.type === "LineSegments") { o.material.color.set(C.grid); o.material.opacity = 0.09; }
+  });
+  // Render at the screen's own resolution, up to 2×. At 1.5× on a Retina screen the browser
+  // upscaled the canvas and the borders looked fuzzy. The extra pixels are offset by the
+  // border layer drawing only land borders (209 lines instead of ~1,600 outlines).
+  world.renderer().setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Start closer than globe.gl's default (altitude 2.5): the globe fills more of its region,
+  // and borders flicker less than when zoomed far out. Closer than the reveal view (1.9).
+  world.pointOfView({ altitude: 1.4 });
+  world.controls().autoRotate = true;
+  world.controls().autoRotateSpeed = 0.35;
+  world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
+  world.controls().addEventListener("end", () => { S.dragging = false; });
+  refreshGlobe();
+  // Size the globe to its region, and keep it sized as the window or the game box changes
+  // height (e.g. when a result appears). The globe stays centred in the space left.
+  const fit = () => world.width(area.clientWidth).height(area.clientHeight);
+  new ResizeObserver(fit).observe(area);
+  fit();
+  $("loading").remove();
+}
+
+// ---------- YouTube ----------
+// Called by the YouTube IFrame API script once it has loaded.
+window.onYouTubeIframeAPIReady = () => { S.ytReady = true; cueRound(); };
+
+function videoId(url) { return url.split("/").pop(); }
+
+// Load the current round's video: creates the player the first time, then just cues the next video.
+function cueRound() {
+  if (!S.ytReady || !S.puzzle) return;
+  const id = videoId(currentRound().youtube_url);
+  if (!S.player) {
+    S.player = new YT.Player("player", {
+      videoId: id,
+      playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1 },
+      events: {
+        onReady: () => { S.playerReady = true; $("play").disabled = false; },
+        onStateChange: e => {
+          const playing = e.data === YT.PlayerState.PLAYING;
+          setPlayLabel(playing);
+          $("lamp").classList.toggle("on", playing);
+        },
+        onError: e => {
+          const why = { 2: "bad video ID", 5: "player error", 100: "video removed or private",
+                        101: "embedding disabled by the owner", 150: "embedding disabled by the owner" }[e.data]
+                      || `error ${e.data}`;
+          $("error").textContent = `This song can't be played here (${why}). Use Skip.`;
+        },
+      },
+    });
+  } else if (S.playerReady) {
+    S.player.cueVideoById(id);
+  }
+}
+
+// Show the elapsed playing time.
+setInterval(() => {
+  if (S.playerReady && S.player.getCurrentTime) {
+    const t = Math.floor(S.player.getCurrentTime() || 0);
+    $("time").textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+  }
+}, 500);
+
+// ---------- rounds ----------
+function currentRound() { return S.puzzle.rounds[S.round]; }
+
+// Move the dial's needle to this round's spot: a different station each round, the same
+// spots for everyone on a given day. Purely decorative.
+function tuneNeedle() {
+  const seed = [...S.puzzle.date].reduce((a, c) => a * 31 + c.charCodeAt(0), 7);
+  $("needle").style.left = `${6 + Math.abs(seed * 7 + S.round * 2971) % 88}%`;
+}
+
+// The row of stamps: one per round, filled in with the country code and points once played.
+function renderStamps() {
+  $("stamps").innerHTML = stampsHtml();
+}
+
+// HTML for the day's stamps (used in the game box and on the passport page).
+function stampsHtml() {
+  return S.puzzle.rounds.map((r, i) => {
+    const x = S.results[i];
+    if (!x) return `<div class="stamp${i === S.round && !S.answered ? " now" : ""}" title="Round ${i + 1}">${i + 1}</div>`;
+    return `<div class="stamp done${x.guess ? "" : " skipped"}" title="Round ${i + 1}: ${r.country_name}, ${x.points.toLocaleString()} points">
+      <div><div class="cc">${r.country}</div>${x.points.toLocaleString()}</div></div>`;
+  }).join("");
+}
+
+// Reset the panel and globe for the current round, with the player covered.
+function startRound() {
+  S.answered = false; S.selected = null;
+  $("round-label").textContent = `${S.puzzle.date} · Round ${S.round + 1} of ${S.puzzle.rounds.length}`;
+  $("cover").hidden = false;
+  $("pick").textContent = "Spin the globe and click the country you think this song is from.";
+  $("guess").disabled = true; $("guess").textContent = "Guess"; $("guess").onclick = submitGuess;
+  $("skip").disabled = false;
+  $("result").innerHTML = ""; $("error").textContent = ""; $("time").textContent = "0:00";
+  document.body.classList.remove("revealed", "map-view"); $("mapbtn").textContent = "Show map";
+  placePlayer();
+  setPlayLabel(false); $("lamp").classList.remove("on");
+  tuneNeedle();
+  renderStamps();
+  world.arcsData([]);
+  world.controls().autoRotate = true;
+  refreshGlobe();
+  cueRound();
+}
+
+// Score the guess (null = skipped), reveal the song and the answer, fly the globe to it,
+// and turn the Guess button into "Next round" (or "See your score" after the last round).
+function finishRound(guessCode) {
+  const r = currentRound();
+  const ans = S.byCode.get(r.country)?.properties;
+  S.answered = true;
+  if (S.player && S.player.pauseVideo) S.player.pauseVideo();
+  $("cover").hidden = true;
+  $("skip").disabled = true;
+
+  const res = guessCode && ans ? score(guessCode, ans) : { km: null, points: 0 };
+  S.results.push({ round: r, guess: guessCode, ...res });
+
+  const guessName = guessCode ? S.byCode.get(guessCode).properties.name : null;
+  const verdict = res.points === MAX_POINTS ? "Spot on!"
+    : guessCode ? `You said ${guessName} · ${Math.round(res.km).toLocaleString()} km off`
+    : "Skipped";
+  $("result").innerHTML = `
+    <div class="pc-top"><div class="pc-from"><small>Greetings from</small>${r.country_name}</div><span class="par-avion">Par avion</span></div>
+    <div class="notes"><span class="song">${r.title}</span><span>${r.artist}</span></div>
+    <div class="pc-video" id="pc-video"></div>
+    <div class="pc-score"><span>${verdict}</span><b>${res.points.toLocaleString()} <span class="of">/ ${MAX_POINTS.toLocaleString()}</span></b></div>
+    <div><a href="${r.artist_link}" target="_blank" rel="noopener">MusicBrainz</a> ·
+      <a href="${r.youtube_url}" target="_blank" rel="noopener">YouTube</a></div>
+    <div class="postmark" aria-hidden="true">${postmark(r.country_name, S.puzzle.date)}</div>`;
+  renderStamps();
+  revealCard();
+
+  if (ans) {
+    if (guessCode && guessCode !== r.country) {
+      const g = S.byCode.get(guessCode).properties;
+      world.arcsData([{ startLat: g.lat, startLng: g.lng, endLat: ans.lat, endLng: ans.lng }])
+        .arcColor(() => [C.bad, C.good]).arcStroke(0.7)
+        .arcDashLength(0.5).arcDashGap(0.15).arcDashAnimateTime(1800);
+    }
+    world.controls().autoRotate = false;
+    world.pointOfView({ lat: ans.lat, lng: ans.lng, altitude: 1.9 }, 1200);
+  }
+  refreshGlobe();
+
+  const last = S.round === S.puzzle.rounds.length - 1;
+  $("guess").disabled = false;
+  $("guess").textContent = last ? "See your score" : "Next round →";
+  $("guess").onclick = last ? showSummary : () => { S.round++; startRound(); };
+}
+
+function submitGuess() { if (S.selected) finishRound(S.selected.properties.code); }
+
+// The end-of-day screen: total score and a row per round.
+function showSummary() {
+  const total = S.results.reduce((s, r) => s + r.points, 0);
+  const rows = S.results.map((x, i) => `
+    <tr><td>${i + 1}. <b>${x.round.country_name}</b><br><span class="sub">${x.round.artist} – ${x.round.title}</span></td>
+    <td class="num">${x.km === null ? "–" : x.km === 0 ? "✓" : Math.round(x.km).toLocaleString() + " km"}</td>
+    <td class="num">${x.points.toLocaleString()}</td></tr>`).join("");
+  $("play-area").hidden = true;
+  $("result").innerHTML = "";
+  document.body.classList.remove("revealed", "map-view");
+  placePlayer();
+  $("summary").hidden = false;
+  $("summary").innerHTML = `
+    <div class="passport">
+      <div class="total">
+        <div><div class="sub">Today's total</div>
+          <div class="big">${total.toLocaleString()} <span class="of">/ ${(MAX_POINTS * S.results.length).toLocaleString()}</span></div></div>
+        <div class="stamps">${stampsHtml()}</div>
+      </div>
+    </div>
+    <table>${rows}</table>
+    <button id="again" style="margin-top:14px;width:100%">Play this day again</button>`;
+  $("again").onclick = () => loadPuzzle($("date").value);
+  $("round-label").textContent = `${S.puzzle.date} · Finished`;
+  world.arcsData([]); world.controls().autoRotate = true;
+  if (S.player && S.player.stopVideo) S.player.stopVideo();
+  $("lamp").classList.remove("on");
+  $("stamps").innerHTML = "";
+}
+
+
+// ---------- phone layout ----------
+// Phone-only behaviour (the layout itself is the max-width: 640px block in <style>), and
+// revealCard, which every screen size uses.
+const phone = matchMedia("(max-width: 640px)");
+
+// The Play button: an icon and a label (phones show only the icon, on a round knob).
+function setPlayLabel(playing) {
+  $("play").innerHTML = playing ? '<span class="ico">❚❚</span><span class="lbl"> Pause</span>'
+                                : '<span class="ico">▶</span><span class="lbl"> Play</span>';
+}
+
+// Postmark text for the postcard: the country and the puzzle's date.
+function postmark(country, date) {
+  const d = new Date(date + "T12:00:00");
+  const day = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase();
+  return `${country.toUpperCase()}<br>· ${day} ·<br>${d.getFullYear()}`;
+}
+
+// Show the reveal: the postcard slams onto the globe (and the globe jolts). On phones, once it
+// has landed, the player is laid over its video slot.
+function revealCard() {
+  document.body.classList.add("revealed");
+  const card = $("result");
+  card.classList.remove("slam"); void card.offsetWidth; card.classList.add("slam");
+  $("globe-area").classList.remove("jolt"); void card.offsetWidth; $("globe-area").classList.add("jolt");
+  const landed = () => { card.removeEventListener("animationend", landed); placePlayer(); };
+  if (getComputedStyle(card).animationName === "slam") card.addEventListener("animationend", landed);
+  else placePlayer();
+}
+
+// On phones after a guess, lay the YouTube player over the postcard's video slot (the player
+// can't be moved in the page without reloading it). Otherwise leave it where the CSS puts it.
+function placePlayer() {
+  const wrap = $("player-wrap"), slot = $("pc-video");
+  const on = phone.matches && S.answered && slot && !document.body.classList.contains("map-view");
+  document.body.classList.toggle("player-on-card", Boolean(on));
+  if (!on) { wrap.style.left = wrap.style.top = wrap.style.width = wrap.style.height = ""; return; }
+  const r = slot.getBoundingClientRect();
+  Object.assign(wrap.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`,
+    width: `${slot.offsetWidth}px`, height: `${slot.offsetHeight}px` });
+}
+addEventListener("resize", placePlayer);
+phone.addEventListener("change", placePlayer);
+
+// ---------- puzzles ----------
+// Load puzzles/<date>.json and start its first round.
+async function loadPuzzle(date) {
+  $("error").textContent = "";
+  const res = await fetch(`${PUZZLES}${date}.json`);
+  if (!res.ok) { $("error").textContent = `No puzzle for ${date}. Run: python make_puzzle.py --date ${date}`; return; }
+  S.puzzle = await res.json();
+  S.round = 0; S.results = [];
+  $("play-area").hidden = false; $("summary").hidden = true;
+  startRound();
+}
+
+
+// Start-up: load the map, draw the globe, fill the date menu from puzzles/index.json,
+// wire up the buttons, and open today's puzzle (or the latest one before today).
+async function init() {
+  try {
+    await loadCountries();
+  } catch (e) {
+    $("loading").textContent = "Couldn't load the map data. Are you online?";
+    return;
+  }
+  initGlobe();
+
+  let dates = [];
+  try { dates = (await (await fetch(`${PUZZLES}index.json`)).json()).dates; } catch (e) {}
+  if (!dates.length) { $("error").textContent = "No puzzles found. Run: python make_puzzle.py"; return; }
+  const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local time
+  const pick = dates.includes(today) ? today : (dates.filter(d => d <= today).pop() || dates[0]);
+  $("date").innerHTML = dates.map(d => `<option ${d === pick ? "selected" : ""}>${d}</option>`).join("");
+  $("date").onchange = e => { document.body.classList.remove("menu-open"); $("menu").setAttribute("aria-expanded", "false"); loadPuzzle(e.target.value); };
+  $("menu").onclick = () => {
+    const open = document.body.classList.toggle("menu-open");
+    $("menu").setAttribute("aria-expanded", String(open));
+  };
+  // Phones: tuck the postcard away to look at the map, and bring it back.
+  $("mapbtn").onclick = () => {
+    const map = document.body.classList.toggle("map-view");
+    $("mapbtn").textContent = map ? "Postcard" : "Show map";
+    // Coming back, wait for the card's 0.25 s transition so the slot is in its final place.
+    if (map) placePlayer(); else setTimeout(placePlayer, 280);
+  };
+
+  $("play").onclick = () => {
+    if (!S.playerReady) return;
+    S.player.getPlayerState() === YT.PlayerState.PLAYING ? S.player.pauseVideo() : S.player.playVideo();
+  };
+  $("skip").onclick = () => finishRound(null);
+  await loadPuzzle(pick);
+}
+
+init();
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
