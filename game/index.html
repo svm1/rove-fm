@@ -253,7 +253,8 @@
     #play .lbl { display: none; }
     #skip { padding: 11px 14px; flex: none; }
     #guess { width: auto !important; flex: 1; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #pick { display: none; }
+    #pick { order: 1; flex-basis: 100%; margin: 0; min-height: 0; text-align: center; }
+    body.revealed #pick { display: none; }
     #error { flex-basis: 100%; margin-top: 0; }
     body.revealed #skip, body.revealed #time, body.revealed #lamp { display: none; }
     body.revealed #mapbtn { display: block; flex: none; padding: 11px 14px; }
@@ -660,7 +661,7 @@ function startRound() {
   S.answered = false; S.selected = null;
   $("round-label").textContent = `${S.puzzle.date} · Round ${S.round + 1} of ${S.puzzle.rounds.length}`;
   $("cover").hidden = false;
-  $("pick").textContent = "Spin the globe and click the country you think this song is from.";
+  $("pick").textContent = `Spin the globe and ${noHover.matches ? "tap" : "click"} the country you think this song is from.`;
   $("guess").disabled = true; $("guess").textContent = "Guess"; $("guess").onclick = submitGuess;
   $("skip").disabled = false;
   $("result").innerHTML = ""; $("error").textContent = ""; $("time").textContent = "0:00";
