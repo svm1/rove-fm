@@ -513,6 +513,9 @@ function borderLines(features) {
 const PHONE_ALTITUDE = 2.5;
 function startAltitude() { return phone.matches ? PHONE_ALTITUDE : 1.4; }
 
+// True on devices whose main input can't hover (phones, tablets).
+const noHover = matchMedia("(hover: none)");
+
 // Create the globe: country shapes, borders, hover labels, click-to-select, slow auto-rotation.
 function initGlobe() {
   readColors();
@@ -544,10 +547,12 @@ function initGlobe() {
     .pathTransitionDuration(0)
     // Borders are drawn over the countries; let hovers and clicks reach the country below.
     .pointerEventsFilter(obj => obj.__globeObjType !== "path")
-    .polygonLabel(f => `<div class="tip">${f.properties.name}</div>`)
+    // On touch screens a tap counts as a hover that never ends, so the tapped country stayed
+    // highlighted (and labelled) after another was selected: no hover effects there.
+    .polygonLabel(f => noHover.matches ? null : `<div class="tip">${f.properties.name}</div>`)
     .onPolygonHover(f => {
       // Countries slide under the cursor while the globe turns; don't recolour mid-drag.
-      if (S.dragging || f === S.hover) return;
+      if (noHover.matches || S.dragging || f === S.hover) return;
       S.hover = f;
       document.body.style.cursor = f ? "pointer" : null;
       refreshGlobe();
