@@ -547,11 +547,12 @@ function initGlobe() {
     .pathTransitionDuration(0)
     // Borders are drawn over the countries; let hovers and clicks reach the country below.
     .pointerEventsFilter(obj => obj.__globeObjType !== "path")
-    // On touch screens a tap counts as a hover that never ends, so the tapped country stayed
-    // highlighted (and labelled) after another was selected: no hover effects there.
-    .polygonLabel(f => noHover.matches ? null : `<div class="tip">${f.properties.name}</div>`)
+    // On touch screens the label follows taps, so it names the country just selected.
+    .polygonLabel(f => `<div class="tip">${f.properties.name}</div>`)
     .onPolygonHover(f => {
       // Countries slide under the cursor while the globe turns; don't recolour mid-drag.
+      // On touch screens a tap counts as a hover that never ends, so the tapped country
+      // stayed highlighted after another was selected: no hover colour there.
       if (noHover.matches || S.dragging || f === S.hover) return;
       S.hover = f;
       document.body.style.cursor = f ? "pointer" : null;
