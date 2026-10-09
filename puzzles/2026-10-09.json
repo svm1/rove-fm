@@ -47,21 +47,21 @@
     {
       "country": "JP",
       "country_name": "Japan",
-      "artist": "YUI",
-      "artist_id": "80d1d7e0-fdab-4009-8375-54bd63d74c0e",
+      "artist": "水木一郎",
+      "artist_id": "f9615cbd-026a-4e30-80c8-2fd0d89e76ff",
       "other_country": null,
       "other_country_name": null,
-      "title": "Understand",
-      "recording_id": "9f2ac1d7-c926-40c8-bc37-e6c4c2355ddd",
-      "length_ms": 213106,
-      "release_title": "My Generation / Understand",
+      "title": "五人でひとつ",
+      "recording_id": "9dda434d-c76d-47ec-8f68-d37301f84b45",
+      "length_ms": 183000,
+      "release_title": "斗え！ゴライオン",
       "release_type": "Single",
-      "youtube_url": "https://youtu.be/IudvyIZ5M_s",
-      "youtube_title": "YUI - Understand (Official Audio)",
-      "youtube_channel": "YUI Music",
-      "youtube_length_s": 214.0,
-      "artist_link": "https://musicbrainz.org/artist/80d1d7e0-fdab-4009-8375-54bd63d74c0e",
-      "recording_link": "https://musicbrainz.org/recording/9f2ac1d7-c926-40c8-bc37-e6c4c2355ddd"
+      "youtube_url": "https://youtu.be/TdK51Z2dPgY",
+      "youtube_title": "五人でひとつ 『百獣王ゴライオン』/水木一郎",
+      "youtube_channel": "Atelier Xanadu",
+      "youtube_length_s": 184.0,
+      "artist_link": "https://musicbrainz.org/artist/f9615cbd-026a-4e30-80c8-2fd0d89e76ff",
+      "recording_link": "https://musicbrainz.org/recording/9dda434d-c76d-47ec-8f68-d37301f84b45"
     }
   ]
 }
