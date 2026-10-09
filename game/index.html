@@ -4,7 +4,7 @@
 
   Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 3 rounds. In each
   round the player listens to a song, whose YouTube player is covered until the round ends,
-  and has up to 3 guesses to click the country on a spinnable globe; each miss shows its
+  and has up to 3 guesses to select the country on a spinnable globe; each miss shows its
   distance and compass direction to the answer. Score: 5,000 / 3,000 / 1,500 for the right
   country on guess 1 / 2 / 3; after 3 misses, 0.3 × 5000 × e^(−km / 2000) for the closest
   guess, with km between country centre points.
@@ -83,12 +83,26 @@
   /* Layout: the game box on top, the globe in its own region filling the rest.
      They're separate boxes, so the globe (however far you zoom) can't overlap the game box. */
   body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  /* The panel takes its full height in the layout from the start, so the globe's region never
+     changes size. Its visible box is ::before, which can be shorter: while loading it ends at the
+     dial (--fold, set by setFold) and then grows to the full panel (body.ready). */
   #panel { flex: none; position: relative; z-index: 1; width: min(780px, calc(100% - 24px)); margin: 14px auto 0;
-    max-height: 52vh; overflow: auto; background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
-    border: 1px solid var(--rim); border-radius: 18px; padding: 14px 18px 16px;
+    border: 1px solid transparent; padding: 14px 18px 16px; }
+  #panel::before { content: ""; position: absolute; z-index: -1; left: -1px; right: -1px; top: -1px;
+    bottom: calc(var(--fold, 0px) - 1px); border: 1px solid var(--rim); border-radius: 18px;
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+  /* The transition is on the ready state only, so setting --fold while loading is instant (a
+     transition there played the box shrinking from full size on load). */
+  body.ready #panel::before { bottom: -1px; transition: bottom 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  /* Scrolls if the game box would be too tall (the end-of-day page on short screens). */
+  #radio { max-height: calc(52vh - 60px); overflow: auto; }
   #globe-area { flex: 1; min-height: 0; position: relative; overflow: hidden; }
   #globe { position: absolute; inset: 0; }
+  /* Fade the canvas's top and bottom edges out, so the glow never ends in a hard line (it showed
+     while the game box was still unfolding over the edge). */
+  #globe { -webkit-mask-image: linear-gradient(transparent, #000 36px, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(transparent, #000 36px, #000 calc(100% - 36px), transparent); }
 
   /* The cabinet top: wordmark and round on the left; stamps and the date on the right. */
   .rx-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -103,7 +117,7 @@
   .rx-right { display: flex; align-items: center; gap: 12px; }
 
   /* The dial: shortwave bands over a tick scale, lit from behind. The needle
-     moves to a new spot each round (tuning in). The lamp by the timer glows while a song plays. */
+     moves to a new spot each round (tuning in). The lamps (by the time) glow while a song plays. */
   .dial { position: relative; height: 42px; margin-top: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--rim);
     background: radial-gradient(ellipse at 50% 130%, #fff1c9 0%, var(--dial) 45%, #c99a4c 100%);
     display: grid; grid-template-rows: 1fr auto; padding: 5px 14px 4px; }
@@ -120,6 +134,13 @@
   /* Inside the game box: video on the left, controls and results on the right. */
   #play-area { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; margin-top: 14px; }
   #play-area[hidden] { display: none; }
+  /* Everything below the dial is hidden until the game works (markReady), then revealed top-down
+     as the box grows (clip-path and opacity only: no layout changes, so it stays smooth). */
+  #unfold { opacity: 0; clip-path: inset(0 0 100% 0);
+    transition: clip-path 0.55s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s 0.1s ease-out; }
+  body.ready #unfold { opacity: 1; clip-path: inset(0 0 0 0); }
+  /* Once open, stop clipping (focus rings, the knob's pulse, the phone's fixed player). */
+  body.unfolded #unfold { clip-path: none; }
   #summary { margin-top: 14px; }
   .row { display: flex; gap: 10px; align-items: center; }
   .spread { justify-content: space-between; }
@@ -132,8 +153,17 @@
   button:active:not(:disabled) { transform: scale(0.96); }
   button:disabled { opacity: 0.45; cursor: default; }
   button.primary { background: var(--airmail-red); border-color: #e0695d; color: #fff4e2; letter-spacing: 0.03em; }
-  /* Play: a bakelite knob. */
-  #play { background: radial-gradient(circle at 35% 30%, #c98a55, #6b3f22 70%); border-color: #8a5a36; color: #fff4e2; }
+  /* Play/pause: a knurled bakelite knob showing only ▶ / ❚❚. On desktop it sits on the speaker
+     grille (#play); on phones at the left end of the dial (#knob). Both do the same. */
+  .playbtn { flex: none; width: 56px; height: 56px; padding: 0; border-radius: 50%; font-size: 17px; color: #fff4e2;
+    border: 1px solid #8a5a36; box-shadow: 0 3px 6px rgba(0, 0, 0, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+    background: radial-gradient(circle at 35% 30%, #c98a55, #6b3f22 70%),
+                repeating-conic-gradient(rgba(0, 0, 0, 0.25) 0 6deg, transparent 6deg 12deg); }
+  .playbtn:hover:not(:disabled) { border-color: var(--glow); }
+  /* Until the round's song first plays, the knob pulses to point the way (all screen sizes). */
+  body.await-play .playbtn:not(:disabled) { animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 179, 71, 0.55); } 70% { box-shadow: 0 0 0 12px rgba(255, 179, 71, 0); }
+                     100% { box-shadow: 0 0 0 0 rgba(255, 179, 71, 0); } }
   select { font: 13px var(--type); padding: 5px 10px; border-radius: 6px; }
 
   #player-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
@@ -141,18 +171,24 @@
   #player-wrap iframe, #player { position: absolute; inset: 0; width: 100%; height: 100%; }
   /* The cover is the radio's speaker grille until you guess. */
   #cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 2px; color: var(--muted); font: 13px var(--type); text-align: center; padding: 12px;
+    justify-content: center; gap: 10px; color: var(--muted); font: 13px var(--type); text-align: center; padding: 12px;
     background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px),
                 radial-gradient(ellipse at 50% 40%, #4a3020, #1e140d 80%); }
   #cover[hidden] { display: none; }
-  #cover .note { font: 400 34px var(--display); color: var(--glow); text-shadow: 0 0 14px rgba(255, 179, 71, 0.5); }
-  #time { font: 14px var(--type); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .cover-time { display: flex; align-items: center; gap: 8px; }
+  .time { font: 14px var(--type); font-variant-numeric: tabular-nums; color: var(--muted); }
+  /* The phone's dial pieces: knob, lamp and the time on the dial glass (see the phone block). */
+  #knob, .dial-lamp, .dial-time { display: none; }
 
-  #pick { margin: 10px 0 12px; min-height: 22px; }
-  #pick b { color: #ff8a7d; }
-  /* The misses so far this round: country, distance and direction to the answer. */
-  #tries { display: grid; gap: 2px; margin: -4px 0 12px; font: 13px var(--type); color: var(--muted); }
-  #tries:empty { display: none; }
+  /* The prompt: one fixed-height area (two lines), so the box never changes height during a
+     round. It shows the instructions until the first miss, then the misses so far (country,
+     distance and direction to the answer) in their place. The pick and the guesses left are on
+     the Guess button. */
+  #prompt { height: 50px; margin: 10px 0 12px; overflow: hidden; }
+  #pick { line-height: 21px; }
+  #tries { display: grid; gap: 2px; padding-top: 3px; font: 13px/18px var(--type); color: var(--muted); }
+  #tries:empty, #tries:not(:empty) + #pick { display: none; }
+  #tries > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #tries .x { color: #ff8a7d; }
   .msg { color: #ff8a7d; font-size: 14px; margin-top: 8px; }
 
@@ -230,6 +266,7 @@
   @media (max-width: 640px) {
     :root { --card-tilt: 1.2deg; }
     #panel { display: contents; }
+    #panel::before { display: none; }
     .rx-top { order: 1; flex: none; flex-wrap: nowrap; gap: 8px; padding: 10px 14px 8px; }
     h1 { font-size: 26px; white-space: nowrap; margin: 0; }
     .brand { flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -253,25 +290,43 @@
     .passport .stamp .cc { font-size: 16px; }
 
     #globe-area { order: 2; }
+    /* While loading, the dock is pushed down so only the dial line shows (--fold), then slides up.
+       Its layout height never changes, so the globe above it keeps its size. */
+    #radio { transform: translateY(var(--fold, 0px)); }
+    /* none, not translateY(0): a transform would trap the fixed-position player inside the dock.
+       The transition is on the ready state only, as for the desktop box. */
+    body.ready #radio { transform: none; transition: transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+    /* While the dock has a transform (loading and sliding up), the fixed player is positioned
+       inside the dock instead of behind the page, and its grille showed through: keep it
+       invisible until the slide is over. */
+    body:not(.unfolded) #player-wrap { visibility: hidden; }
     #radio { order: 3; flex: none; position: relative; max-height: 72vh; overflow: auto;
       padding: 12px 14px calc(16px + env(safe-area-inset-bottom, 0px));
       background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
       border-top: 1px solid var(--rim); border-radius: 22px 22px 0 0;
       box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
-    .dial { height: 26px; margin-top: 0; padding: 3px 10px 3px; border-radius: 7px; }
+    /* Version B: the knob and lamp at the left end of the dial, the time on the dial glass. */
+    .dial-line { display: flex; align-items: center; gap: 10px; }
+    .dial-line .dial { flex: 1; min-width: 0; }
+    #knob { display: block; width: 40px; height: 40px; font-size: 13px; }
+    .dial-lamp { display: block; }
+    .dial-time { display: block; position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+      font: 700 13px var(--type); color: var(--dial-ink); opacity: 0.85; }
+    #play { display: none; }
+    /* The dial's knob, lamp and time fade in with the rest when the game is ready. */
+    #knob, .dial-time { transition: opacity 0.45s 0.15s; }
+    .dial-lamp { transition: opacity 0.45s 0.15s, background 0.3s, box-shadow 0.3s; }
+    body:not(.ready) :is(#knob, .dial-lamp, .dial-time) { opacity: 0; pointer-events: none; }
+    .dial { height: 34px; margin-top: 0; padding: 4px 52px 3px 10px; border-radius: 7px; }
     .dial-row { font-size: 8.5px; }
     .ticks { height: 5px; background: repeating-linear-gradient(90deg, var(--dial-ink) 0 1px, transparent 1px 6px); }
     #play-area { display: block; margin-top: 10px; }
     #controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     #controls .row { display: contents; }
-    #play { width: 46px; height: 46px; padding: 0; flex: none; font-size: 15px; }
-    #play .lbl { display: none; }
     #guess { width: auto !important; flex: 1; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #pick { order: 1; flex-basis: 100%; margin: 0; min-height: 0; text-align: center; }
-    #tries { order: 1; flex-basis: 100%; margin: 0; text-align: center; }
-    body.revealed #pick, body.revealed #tries { display: none; }
+    #prompt { order: 1; flex-basis: 100%; height: 42px; margin: 0; text-align: center; }
+    body.revealed #prompt { display: none; }
     #error { flex-basis: 100%; margin-top: 0; }
-    body.revealed #time, body.revealed #lamp { display: none; }
     body.revealed #mapbtn { display: block; flex: none; padding: 11px 14px; }
 
     /* Before the guess the player is hidden behind the page (it only needs to play sound);
@@ -305,7 +360,7 @@
   }
   @keyframes jolt { 0%, 100% { transform: none; } 30% { transform: translateY(4px); } 60% { transform: translateY(-2px); } }
   @media (prefers-reduced-motion: reduce) {
-    .needle { transition: none; }
+    .needle, #unfold, body.ready #panel::before, body.ready #radio { transition: none; }
     .postcard.slam, .postcard.slam .postmark, #globe-area.jolt { animation: none; }
   }
 </style>
@@ -325,31 +380,38 @@
   </div>
   <div id="radio">
   <!-- Decoration: the real shortwave broadcast bands, as on old dials. No place names: they'd read as hints. -->
-  <div class="dial" aria-hidden="true">
-    <div class="dial-row bands"><span>49 m</span><span>41 m</span><span>31 m</span><span>25 m</span><span>19 m</span><span>16 m</span></div>
-    <div class="ticks"></div>
-    <div id="needle" class="needle"></div>
+  <div class="dial-line">
+    <button id="knob" class="playbtn" type="button" aria-label="Play" disabled>▶</button>
+    <span class="lamp dial-lamp" title="On air"></span>
+    <div class="dial">
+      <div class="dial-row bands" aria-hidden="true"><span>49 m</span><span>41 m</span><span>31 m</span><span>25 m</span><span>19 m</span><span>16 m</span></div>
+      <div class="ticks" aria-hidden="true"></div>
+      <div id="needle" class="needle" aria-hidden="true"></div>
+      <span class="time dial-time">0:00</span>
+    </div>
   </div>
+  <div id="unfold"><div>
   <div id="play-area">
     <div id="player-wrap">
       <div id="player"></div>
-      <div id="cover"><div class="note">♪</div></div>
+      <div id="cover">
+        <button id="play" class="playbtn" type="button" aria-label="Play" disabled>▶</button>
+        <div class="cover-time"><span class="time">0:00</span><span class="lamp" title="On air"></span></div>
+      </div>
     </div>
     <div id="controls">
       <div class="row spread">
-        <div class="row">
-          <button id="play" class="primary" disabled><span class="ico">▶</span><span class="lbl"> Play</span></button>
-          <span id="time">0:00</span>
-          <span id="lamp" class="lamp" title="On air"></span>
-        </div>
         <button id="mapbtn" type="button">Show map</button>
       </div>
-      <div id="pick" class="sub">Spin the globe and click the country you think this song is from.</div>
-      <div id="tries" aria-live="polite"></div>
+      <div id="prompt">
+        <div id="tries" aria-live="polite"></div>
+        <div id="pick" class="sub">Spin the globe and select the country you think this song is from.</div>
+      </div>
       <button id="guess" class="primary" style="width:100%" disabled>Guess</button>
       <div id="error" class="msg"></div>
     </div>
   </div>
+  </div></div>
   <div id="summary" hidden></div>
   </div>
 </div>
@@ -360,8 +422,25 @@
   <div id="result" class="postcard" aria-live="polite"></div>
 </div>
 
+<script>
+// While loading, how much of the game box hides below the dial: the distance from the dial line
+// to the box's bottom edge, as --fold (CSS). On phones the box is the dock (#radio). This runs
+// here, before the libraries below download, so the box is folded from the first paint; again
+// once the web fonts have loaded (they can change its height) and on resize, until it unfolds.
+function setFold() {
+  if (document.body.classList.contains("ready")) return;
+  const onPhone = matchMedia("(max-width: 640px)").matches;
+  const box = document.getElementById(onPhone ? "radio" : "panel"), pad = onPhone ? 12 : 14;
+  const fold = box.getBoundingClientRect().bottom - document.querySelector(".dial-line").getBoundingClientRect().bottom - pad;
+  document.documentElement.style.setProperty("--fold", `${Math.max(0, Math.round(fold))}px`);
+}
+setFold();
+document.fonts.ready.then(setFold);
+addEventListener("resize", setFold);
+</script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/globe.gl@2"></script>
+<script src="timezones.js"></script>
 <script>
 const GEOJSON = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_0_countries.geojson";
 const PUZZLES = "../puzzles/";
@@ -385,11 +464,12 @@ const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
 // All page state: country shapes (and by ISO code), the hovered and selected country,
-// the loaded puzzle, the current round, this round's guesses, results so far, and the YouTube player.
+// the loaded puzzle, the current round, this round's guesses, results so far, the YouTube player,
+// and whether the globe has been drawn (the controls wait for it: markReady).
 const S = {
   features: [], byCode: new Map(), hover: null, selected: null, dragging: false,
   puzzle: null, round: 0, guesses: [], results: [], answered: false,
-  player: null, playerReady: false, ytReady: false,
+  player: null, playerReady: false, ytReady: false, globeDrawn: false,
 };
 
 // ---------- geography ----------
@@ -559,6 +639,14 @@ function borderLines(features) {
 const PHONE_ALTITUDE = 2.5;
 function startAltitude() { return phone.matches ? PHONE_ALTITUDE : 1.4; }
 
+// Where the globe starts: facing the player's region, from the browser's time zone (TZ_COORDS,
+// timezones.js), so no location prompt. An unknown zone gives just a longitude, from the UTC
+// offset (15° an hour), at 20°N.
+function homeView() {
+  const c = window.TZ_COORDS?.[Intl.DateTimeFormat().resolvedOptions().timeZone];
+  return c ? { lat: c[0], lng: c[1] } : { lat: 20, lng: -new Date().getTimezoneOffset() / 4 };
+}
+
 // True on devices whose main input can't hover (phones, tablets).
 const noHover = matchMedia("(hover: none)");
 
@@ -608,8 +696,7 @@ function initGlobe() {
       if (!S.puzzle || S.answered || !f.properties.code) return;
       if (S.guesses.some(g => g.code === f.properties.code)) return; // already missed this round
       S.selected = f;
-      $("pick").innerHTML = `Your guess: <b>${f.properties.name}</b>`;
-      $("guess").disabled = false;
+      $("guess").disabled = false; setGuessLabel();
       refreshGlobe();
     });
   world.globeMaterial().color.set(C.ocean);
@@ -621,7 +708,7 @@ function initGlobe() {
   // upscaled the canvas and the borders looked fuzzy. The extra pixels are offset by the
   // border layer drawing only land borders (209 lines instead of ~1,600 outlines).
   world.renderer().setPixelRatio(Math.min(devicePixelRatio, 2));
-  world.pointOfView({ altitude: startAltitude() });
+  world.pointOfView({ ...homeView(), altitude: startAltitude() });
   world.controls().autoRotate = true;
   world.controls().autoRotateSpeed = 0.35;
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
@@ -632,7 +719,16 @@ function initGlobe() {
   const fit = () => world.width(area.clientWidth).height(area.clientHeight);
   new ResizeObserver(fit).observe(area);
   fit();
-  whenGlobeDrawn(() => $("loading").remove());
+  whenGlobeDrawn(() => {
+    $("loading").remove();
+    S.globeDrawn = true;
+    markReady();
+    // If the YouTube player never loads (blocked, offline), open up anyway after 10 s.
+    setTimeout(() => {
+      if (!S.playerReady) $("error").textContent = "Couldn't load the YouTube player, so songs can't play.";
+      markReady(true);
+    }, 10000);
+  });
 }
 
 // Call `done` once the globe is on screen. globe.gl builds the country shapes after initGlobe()
@@ -669,12 +765,12 @@ function cueRound() {
       videoId: id,
       playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1 },
       events: {
-        onReady: () => { S.playerReady = true; $("play").disabled = false; },
-        onStateChange: e => {
-          const playing = e.data === YT.PlayerState.PLAYING;
-          setPlayLabel(playing);
-          $("lamp").classList.toggle("on", playing);
+        onReady: () => {
+          S.playerReady = true;
+          document.querySelectorAll(".playbtn").forEach(b => b.disabled = false);
+          markReady();
         },
+        onStateChange: e => setPlaying(e.data === YT.PlayerState.PLAYING),
         onError: e => {
           const why = { 2: "bad video ID", 5: "player error", 100: "video removed or private",
                         101: "embedding disabled by the owner", 150: "embedding disabled by the owner" }[e.data]
@@ -688,12 +784,24 @@ function cueRound() {
   }
 }
 
+// Show the playing state: ▶ or ❚❚ on the play buttons, and the lamps lit while playing.
+function setPlaying(playing) {
+  document.querySelectorAll(".playbtn").forEach(b => {
+    b.textContent = playing ? "❚❚" : "▶";
+    b.setAttribute("aria-label", playing ? "Pause" : "Play");
+  });
+  document.querySelectorAll(".lamp").forEach(l => l.classList.toggle("on", playing));
+  if (playing) document.body.classList.remove("await-play");
+}
+
+// Set the elapsed-time readouts (grille and dial) to t seconds.
+function showTime(t) {
+  document.querySelectorAll(".time").forEach(e => e.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`);
+}
+
 // Show the elapsed playing time.
 setInterval(() => {
-  if (S.playerReady && S.player.getCurrentTime) {
-    const t = Math.floor(S.player.getCurrentTime() || 0);
-    $("time").textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
-  }
+  if (S.playerReady && S.player.getCurrentTime) showTime(Math.floor(S.player.getCurrentTime() || 0));
 }, 500);
 
 // ---------- rounds ----------
@@ -726,13 +834,13 @@ function startRound() {
   S.answered = false; S.selected = null; S.guesses = [];
   $("round-label").textContent = `${S.puzzle.date} · Round ${S.round + 1} of ${S.puzzle.rounds.length}`;
   $("cover").hidden = false;
-  $("pick").textContent = `Spin the globe and ${noHover.matches ? "tap" : "click"} the country you think this song is from.`;
-  $("tries").innerHTML = "";
+  $("pick").textContent = "Spin the globe and select the country you think this song is from.";
+  renderTries();
   $("guess").disabled = true; setGuessLabel(); $("guess").onclick = submitGuess;
-  $("result").innerHTML = ""; $("error").textContent = ""; $("time").textContent = "0:00";
+  $("result").innerHTML = ""; $("error").textContent = ""; showTime(0);
   document.body.classList.remove("revealed", "map-view"); $("mapbtn").textContent = "Show map";
   placePlayer();
-  setPlayLabel(false); $("lamp").classList.remove("on");
+  setPlaying(false); document.body.classList.add("await-play");
   tuneNeedle();
   renderStamps();
   world.arcsData([]);
@@ -741,13 +849,14 @@ function startRound() {
   cueRound();
 }
 
-// The Guess button, with the guesses left this round.
+// The Guess button: the country picked, if any, and the guesses left this round.
 function setGuessLabel() {
   const left = MAX_GUESSES - S.guesses.length;
-  $("guess").textContent = `Guess · ${left} left`;
+  $("guess").textContent = `Guess${S.selected ? ` ${S.selected.properties.name}` : ""} · ${left} left`;
 }
 
 // The misses so far this round, one line each: country, distance and direction to the answer.
+// They take the instructions' place in the prompt (CSS).
 function renderTries() {
   $("tries").innerHTML = S.guesses.filter(g => g.km > 0).map(g =>
     `<div><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
@@ -759,6 +868,7 @@ function finishRound() {
   const r = currentRound();
   const ans = S.byCode.get(r.country)?.properties;
   S.answered = true; S.selected = null;
+  document.body.classList.remove("await-play");
   if (S.player && S.player.pauseVideo) S.player.pauseVideo();
   $("cover").hidden = true;
 
@@ -778,7 +888,9 @@ function finishRound() {
     <div><a href="${r.artist_link}" target="_blank" rel="noopener">MusicBrainz</a> ·
       <a href="${r.youtube_url}" target="_blank" rel="noopener">YouTube</a></div>
     <div class="postmark" aria-hidden="true">${postmark(r.country_name, S.puzzle.date)}</div>`;
-  renderTries();
+  // The prompt keeps the misses from before the last guess (the postcard has the result), so
+  // the box keeps its height; with no misses, the instructions give way to a blank.
+  $("pick").textContent = "";
   renderStamps();
   revealCard();
 
@@ -812,8 +924,6 @@ function submitGuess() {
   if (g.km === 0 || S.guesses.length === MAX_GUESSES) { finishRound(); return; }
   S.selected = null;
   renderTries();
-  const left = MAX_GUESSES - S.guesses.length;
-  $("pick").innerHTML = `Not ${g.name}. Pick again: ${left} ${left === 1 ? "guess" : "guesses"} left.`;
   $("guess").disabled = true; setGuessLabel();
   refreshGlobe();
 }
@@ -884,7 +994,7 @@ function showSummary() {
   $("round-label").textContent = `${S.puzzle.date} · Finished`;
   world.arcsData([]); world.controls().autoRotate = true;
   if (S.player && S.player.stopVideo) S.player.stopVideo();
-  $("lamp").classList.remove("on");
+  setPlaying(false);
   $("stamps").innerHTML = "";
 }
 
@@ -893,12 +1003,6 @@ function showSummary() {
 // Phone-only behaviour (the layout itself is the max-width: 640px block in <style>), and
 // revealCard, which every screen size uses.
 const phone = matchMedia("(max-width: 640px)");
-
-// The Play button: an icon and a label (phones show only the icon, on a round knob).
-function setPlayLabel(playing) {
-  $("play").innerHTML = playing ? '<span class="ico">❚❚</span><span class="lbl"> Pause</span>'
-                                : '<span class="ico">▶</span><span class="lbl"> Play</span>';
-}
 
 // Postmark text for the postcard: the country and the puzzle's date.
 function postmark(country, date) {
@@ -938,11 +1042,27 @@ phone.addEventListener("change", placePlayer);
 async function loadPuzzle(date) {
   $("error").textContent = "";
   const res = await fetch(`${PUZZLES}${date}.json`);
-  if (!res.ok) { $("error").textContent = `No puzzle for ${date}. Run: python make_puzzle.py --date ${date}`; return; }
+  if (!res.ok) {
+    $("error").textContent = `No puzzle for ${date}. Run: python make_puzzle.py --date ${date}`;
+    markReady(true);
+    return;
+  }
   S.puzzle = await res.json();
   S.round = 0; S.results = [];
   $("play-area").hidden = false; $("summary").hidden = true;
   startRound();
+  setFold();
+  markReady();
+}
+
+// Once the globe is drawn, the puzzle loaded and the player ready, unfold the controls (CSS:
+// body.ready). force opens up regardless, to show an error (the loading text goes too).
+function markReady(force = false) {
+  if (document.body.classList.contains("ready")) return;
+  if (!force && !(S.globeDrawn && S.playerReady && S.puzzle)) return;
+  $("loading")?.remove();
+  document.body.classList.add("ready");
+  setTimeout(() => document.body.classList.add("unfolded"), 650);
 }
 
 
@@ -959,7 +1079,7 @@ async function init() {
 
   let dates = [];
   try { dates = (await (await fetch(`${PUZZLES}index.json`)).json()).dates; } catch (e) {}
-  if (!dates.length) { $("error").textContent = "No puzzles found. Run: python make_puzzle.py"; return; }
+  if (!dates.length) { $("error").textContent = "No puzzles found. Run: python make_puzzle.py"; markReady(true); return; }
   const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local time
   const pick = dates.includes(today) ? today : (dates.filter(d => d <= today).pop() || dates[0]);
   $("date").innerHTML = dates.map(d => `<option ${d === pick ? "selected" : ""}>${d}</option>`).join("");
@@ -976,10 +1096,10 @@ async function init() {
     if (map) placePlayer(); else setTimeout(placePlayer, 280);
   };
 
-  $("play").onclick = () => {
+  document.querySelectorAll(".playbtn").forEach(b => b.onclick = () => {
     if (!S.playerReady) return;
     S.player.getPlayerState() === YT.PlayerState.PLAYING ? S.player.pauseVideo() : S.player.playVideo();
-  };
+  });
   await loadPuzzle(pick);
 }
 
