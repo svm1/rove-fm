@@ -29,10 +29,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rove.FM</title>
-<!-- SVG for browsers that take it; the PNG (rendered from favicon.svg) for Safari tabs.
+<!-- SVG for browsers that take it; the PNG (rendered from favicon.svg) for Safari tabs; the
+     180 px apple-touch-icon (favicon.svg without the rounded corners) for phone home screens.
+     Render: rsvg-convert -w 32 favicon.svg -o favicon-32.png (and -w 180 for the touch icon).
      Browsers cache favicons hard: bump ?v= whenever the icon changes. -->
-<link rel="icon" href="favicon.svg?v=3" type="image/svg+xml">
-<link rel="icon" href="favicon-32.png?v=3" type="image/png" sizes="32x32">
+<link rel="icon" href="favicon.svg?v=4" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png?v=4" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=Courier+Prime:wght@400;700&family=Fascinate+Inline&family=Righteous&display=swap">
