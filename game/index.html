@@ -551,7 +551,7 @@ const NAMES = { RU: "Russia", KR: "South Korea", KP: "North Korea", LA: "Laos", 
 const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
-const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf (with &dpr=N, &coast=builtin)
+const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf, &dpr=N, &coast=builtin, &decay=N
 // All page state: country shapes (and by ISO code), the hovered and selected country,
 // the loaded puzzle, the current round, this round's guesses, results so far, the YouTube player,
 // and whether the globe has been drawn (the controls wait for it: markReady).
@@ -762,7 +762,7 @@ function hideTapTip() { $("tap-tip").classList.remove("on"); }
 function timeBasedCoast() {
   const controls = world.controls(), samples = [];
   let raf = 0;
-  const DECAY = 6.3; // per second
+  const DECAY = +DEBUG.get("decay") || 6.3; // per second; ?decay=N (debug) to try others
   const stop = () => { cancelAnimationFrame(raf); raf = 0; };
   controls.addEventListener("start", () => { stop(); samples.length = 0; });
   controls.addEventListener("change", () => {
@@ -1422,7 +1422,7 @@ if (DEBUG.has("perf")) {
         `fps ${sec.length}  last ${dt.toFixed(1)}ms  worst ${Math.max(...sec.map(f => f.dt)).toFixed(1)}ms\n` +
         `>20ms ${sec.filter(f => f.dt > 20).length}  >34ms ${sec.filter(f => f.dt > 34).length}  ${state}\n` +
         `pixel ratio ${r ? r.getPixelRatio() : "–"} (screen ${devicePixelRatio})  ${size}\n` +
-        `coast ${DEBUG.get("coast") === "builtin" ? "built-in" : noHover.matches ? "time-based" : "built-in (desktop)"}`;
+        `coast ${DEBUG.get("coast") === "builtin" ? "built-in" : noHover.matches ? `time-based, decay ${+DEBUG.get("decay") || 6.3}/s` : "built-in (desktop)"}`;
       g.clearRect(0, 0, graph.width, graph.height);
       const W = graph.width, H = graph.height, x = f => W - (now - f.t) / 3000 * W;
       g.fillStyle = "rgba(255,255,255,0.08)";
