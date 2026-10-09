@@ -798,9 +798,21 @@ function initGlobe() {
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
   world.controls().addEventListener("end", () => { S.dragging = false; });
   refreshGlobe();
-  // Size the globe to its region, and keep it sized as the window or the game box changes
-  // height (e.g. when a result appears). The globe stays centred in the space left.
-  const fit = () => world.width(area.clientWidth).height(area.clientHeight);
+  // Size the globe to its region, and keep it sized as the window or the game box changes.
+  // On phones the dock's prompt area collapses on the reveal and comes back next round, which
+  // made the region (and so the globe, drawn to fit it) grow and shrink. So there the canvas is
+  // always as tall as the region with the prompt collapsed: while the prompt shows, the canvas's
+  // bottom (the prompt's height plus its gap) sits hidden behind the dock instead.
+  let size = "";
+  const fit = () => {
+    let extra = 0;
+    if (phone.matches && !document.body.classList.contains("revealed")) {
+      extra = $("prompt").offsetHeight + (parseFloat(getComputedStyle($("controls")).rowGap) || 0);
+    }
+    const w = area.clientWidth, h = area.clientHeight + extra;
+    Object.assign($("globe").style, { bottom: "auto", height: `${h}px` });
+    if (`${w}x${h}` !== size) { size = `${w}x${h}`; world.width(w).height(h); }
+  };
   new ResizeObserver(fit).observe(area);
   fit();
   whenGlobeDrawn(() => {
