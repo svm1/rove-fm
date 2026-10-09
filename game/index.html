@@ -65,6 +65,7 @@
     --land-edge: #2a1e14;
     --ocean: #1d1611;
     --grid: #f1e3c6;             /* the atlas lat/long grid (drawn faintly) */
+    --page-bg: radial-gradient(ellipse at 50% 70%, #241911 0%, var(--bg) 65%); /* the room behind everything */
     --card-tilt: -0.8deg;        /* the postcard's resting angle (phones tilt it the other way) */
     --title: "Fascinate Inline", Georgia, serif;   /* the wordmark: Art Deco with an inline */
     --display: "Righteous", system-ui, sans-serif; /* country names, hover labels, stamps */
@@ -75,7 +76,7 @@
      and takes taps. Buttons get a press effect instead (below). */
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; color: var(--text); font: 16px/1.45 var(--body); overflow: hidden;
-    background: radial-gradient(ellipse at 50% 70%, #241911 0%, var(--bg) 65%); }
+    background: var(--page-bg); }
   /* Film grain over everything; it never takes clicks. */
   body::after { content: ""; position: fixed; inset: 0; z-index: 10; pointer-events: none; opacity: 0.16; mix-blend-mode: overlay;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
@@ -96,13 +97,31 @@
      transition there played the box shrinking from full size on load). */
   body.ready #panel::before { bottom: -1px; transition: bottom 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
   /* Scrolls if the game box would be too tall (the end-of-day page on short screens). */
-  #radio { max-height: calc(52vh - 60px); overflow: auto; }
+  #radio { position: relative; max-height: calc(52vh - 60px); overflow: auto; }
+
+  /* The visualizer: a ring of radar-swept LED bars around the play knob while a song plays
+     (drawVisualizer). It's drawn three times, so each part sits at the right depth: over the
+     grille's cloth (#viz-grille, under the knob), behind the radio's contents (#viz-panel), and
+     over the globe's region (#viz-out) for what reaches past the box or the phone's dock. The
+     inner layers are first in their box and everything after them is positioned, so the contents
+     paint over them by document order: no z-index, which would trap the phone's fixed player. */
+  /* Each layer is a small canvas just big enough for the ring, placed over the knob each frame
+     (drawVisualizer); its box clips it to the part that belongs at that depth. */
+  .viz { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+  #viz-out { z-index: 1; }
+  #radio > :not(.viz), #cover > :not(.viz) { position: relative; }
   #globe-area { flex: 1; min-height: 0; position: relative; overflow: hidden; }
   #globe { position: absolute; inset: 0; }
-  /* Fade the canvas's top and bottom edges out, so the glow never ends in a hard line (it showed
-     while the game box was still unfolding over the edge). */
-  #globe { -webkit-mask-image: linear-gradient(transparent, #000 36px, #000 calc(100% - 36px), transparent);
-    mask-image: linear-gradient(transparent, #000 36px, #000 calc(100% - 36px), transparent); }
+  /* The globe fades in once it has been drawn (body.globe-drawn, set by whenGlobeDrawn). */
+  #globe { opacity: 0; transition: opacity 0.8s ease-out; }
+  body.globe-drawn #globe { opacity: 1; }
+  /* The globe region's top and bottom edges fade out, so the glow never ends in a hard line. Not a
+     mask on the globe (that costs a pass on every frame of the turning globe): two strips over the
+     edges, painted with the page's own background lined up with it (alignEdges) and fading to
+     transparent. They never change, so their fade is worked out once. */
+  .globe-edge { position: absolute; left: 0; right: 0; height: 36px; pointer-events: none; background: var(--page-bg); }
+  .globe-edge.top { top: 0; -webkit-mask-image: linear-gradient(#000, transparent); mask-image: linear-gradient(#000, transparent); }
+  .globe-edge.bottom { bottom: 0; -webkit-mask-image: linear-gradient(transparent, #000); mask-image: linear-gradient(transparent, #000); }
 
   /* The cabinet top: wordmark and round on the left; stamps and the date on the right. */
   .rx-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -129,7 +148,7 @@
     box-shadow: 0 0 6px 1px rgba(200, 69, 58, 0.6); transition: left 1.4s cubic-bezier(0.3, 1.5, 0.5, 1); }
   .lamp { width: 9px; height: 9px; border-radius: 50%; background: #5e4329; flex: none;
     transition: background 0.3s, box-shadow 0.3s; }
-  .lamp.on { background: var(--glow); box-shadow: 0 0 10px 3px var(--glow); }
+  .lamp.on { background: var(--glow); box-shadow: 0 0 10px 3px var(--glow); opacity: 0.6; } /* dimmed: bulb and glow together */
 
   /* Inside the game box: video on the left, controls and results on the right. */
   #play-area { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; margin-top: 14px; }
@@ -171,11 +190,15 @@
   #player-wrap iframe, #player { position: absolute; inset: 0; width: 100%; height: 100%; }
   /* The cover is the radio's speaker grille until you guess. */
   #cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 10px; color: var(--muted); font: 13px var(--type); text-align: center; padding: 12px;
+    justify-content: center; gap: 10px; color: var(--muted); font: 13px var(--type); text-align: center; padding: 12px 12px 40px;
     background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px),
                 radial-gradient(ellipse at 50% 40%, #4a3020, #1e140d 80%); }
   #cover[hidden] { display: none; }
-  .cover-time { display: flex; align-items: center; gap: 8px; }
+  /* The time and lamp sit near the grille's bottom edge, mostly out of the visualizer's ring (its
+     bars reach 73 px from the knob; this row starts ~62 px below it). The bottom padding above
+     keeps the knob where it was when this row sat just under it. */
+  #cover .cover-time { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; }
   .time { font: 14px var(--type); font-variant-numeric: tabular-nums; color: var(--muted); }
   /* The phone's dial pieces: knob, lamp and the time on the dial glass (see the phone block). */
   #knob, .dial-lamp, .dial-time { display: none; }
@@ -185,7 +208,7 @@
      distance and direction to the answer) in their place. The pick and the guesses left are on
      the Guess button. */
   #prompt { height: 50px; margin: 10px 0 12px; overflow: hidden; }
-  #pick { line-height: 21px; }
+  #pick { font: 13px/18px var(--type); } /* typewriter, at the hints' size and spacing */
   #tries { display: grid; gap: 2px; padding-top: 3px; font: 13px/18px var(--type); color: var(--muted); }
   #tries:empty, #tries:not(:empty) + #pick { display: none; }
   #tries > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -253,7 +276,25 @@
   .tip { background: var(--dial); color: var(--dial-ink); border-radius: 999px; padding: 3px 12px 4px;
     font: 400 16px var(--display); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: var(--muted); font-family: var(--type); pointer-events: none; }
+    color: var(--muted); font-family: var(--type); pointer-events: none; animation: breathe 1.8s ease-in-out infinite; }
+  /* While loading, faint static fills the globe's spot (drawn by the early script); it fades out
+     as the globe fades in. */
+  #static { position: absolute; inset: 0; overflow: hidden; pointer-events: none; transition: opacity 0.8s ease-out;
+    -webkit-mask-image: radial-gradient(circle closest-side, #000 8%, transparent 97%);
+            mask-image: radial-gradient(circle closest-side, #000 8%, transparent 97%); }
+  body.globe-drawn #static { opacity: 0; }
+  /* The grain: four small canvases of noise (drawn once by the early script at a third of the
+     screen's resolution, stretched up), shown one at a time for 50 ms each. Only opacity
+     keyframes, with near-instant cuts and no steps(): every browser runs those off the main
+     thread, so the static keeps flickering while building the globe blocks the page. */
+  #static .grain { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated;
+    opacity: 0; will-change: opacity; animation: grain-frame 0.2s linear infinite; }
+  #static .grain:nth-child(2) { animation-delay: -0.05s; }
+  #static .grain:nth-child(3) { animation-delay: -0.1s; }
+  #static .grain:nth-child(4) { animation-delay: -0.15s; }
+  @keyframes grain-frame { 0%, 24.9% { opacity: 0.11; } 25%, 100% { opacity: 0; } }
+  /* The loading text fades in and out while the globe is built. */
+  @keyframes breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
   /* Phone-only pieces, hidden on desktop. */
   #menu, #mapbtn, .pc-video { display: none; }
 
@@ -360,7 +401,8 @@
   }
   @keyframes jolt { 0%, 100% { transform: none; } 30% { transform: translateY(4px); } 60% { transform: translateY(-2px); } }
   @media (prefers-reduced-motion: reduce) {
-    .needle, #unfold, body.ready #panel::before, body.ready #radio { transition: none; }
+    .needle, #unfold, body.ready #panel::before, body.ready #radio, #globe { transition: none; }
+    #loading { animation: none; }
     .postcard.slam, .postcard.slam .postmark, #globe-area.jolt { animation: none; }
   }
 </style>
@@ -379,6 +421,7 @@
     </div>
   </div>
   <div id="radio">
+  <canvas id="viz-panel" class="viz" aria-hidden="true"></canvas>
   <!-- Decoration: the real shortwave broadcast bands, as on old dials. No place names: they'd read as hints. -->
   <div class="dial-line">
     <button id="knob" class="playbtn" type="button" aria-label="Play" disabled>▶</button>
@@ -395,6 +438,7 @@
     <div id="player-wrap">
       <div id="player"></div>
       <div id="cover">
+        <canvas id="viz-grille" class="viz" aria-hidden="true"></canvas>
         <button id="play" class="playbtn" type="button" aria-label="Play" disabled>▶</button>
         <div class="cover-time"><span class="time">0:00</span><span class="lamp" title="On air"></span></div>
       </div>
@@ -405,7 +449,7 @@
       </div>
       <div id="prompt">
         <div id="tries" aria-live="polite"></div>
-        <div id="pick" class="sub">Spin the globe and select the country you think this song is from.</div>
+        <div id="pick" class="sub">Spin the globe and select the country you think the song is from.</div>
       </div>
       <button id="guess" class="primary" style="width:100%" disabled>Guess</button>
       <div id="error" class="msg"></div>
@@ -418,7 +462,11 @@
 
 <div id="globe-area">
   <div id="globe"></div>
+  <div class="globe-edge top" aria-hidden="true"></div>
+  <div class="globe-edge bottom" aria-hidden="true"></div>
+  <div id="static" aria-hidden="true"><canvas class="grain"></canvas><canvas class="grain"></canvas><canvas class="grain"></canvas><canvas class="grain"></canvas></div>
   <div id="loading">Scanning the shortwave…</div>
+  <canvas id="viz-out" class="viz" aria-hidden="true"></canvas>
   <div id="result" class="postcard" aria-live="polite"></div>
 </div>
 
@@ -437,6 +485,36 @@ function setFold() {
 setFold();
 document.fonts.ready.then(setFold);
 addEventListener("resize", setFold);
+
+// Line up the globe's edge strips' background with the page's (the strips paint the same gradient,
+// sized to the viewport and shifted back by their own position), so they blend in exactly.
+function alignEdges() {
+  for (const el of document.querySelectorAll(".globe-edge")) {
+    const r = el.getBoundingClientRect();
+    el.style.backgroundSize = `${innerWidth}px ${innerHeight}px`;
+    el.style.backgroundPosition = `${-r.left}px ${-r.top}px`;
+  }
+}
+alignEdges();
+document.fonts.ready.then(alignEdges); // the fonts can change the box's height, moving the globe region
+addEventListener("resize", alignEdges);
+
+// Loading static: fill #static's four grain canvases with amber-tinted noise, once, here, before
+// the libraries download (each at a third of the globe region's size; CSS stretches them). The
+// flicker is a CSS opacity animation cycling through them, which runs off the main thread, so it
+// keeps going while building the globe blocks the page. Skipped under reduced motion; the main
+// script removes it after the globe has faded in.
+(function loadingStatic() {
+  const el = document.getElementById("static");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { el.remove(); return; }
+  const b = el.getBoundingClientRect(), w = Math.max(1, Math.ceil(b.width / 3)), h = Math.max(1, Math.ceil(b.height / 3));
+  for (const c of el.querySelectorAll(".grain")) {
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d"), img = ctx.createImageData(w, h), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const v = Math.random() * 255; d[i] = v; d[i + 1] = v * 0.8; d[i + 2] = v * 0.55; d[i + 3] = 255; }
+    ctx.putImageData(img, 0, 0);
+  }
+})();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/globe.gl@2"></script>
@@ -710,7 +788,7 @@ function initGlobe() {
   world.renderer().setPixelRatio(Math.min(devicePixelRatio, 2));
   world.pointOfView({ ...homeView(), altitude: startAltitude() });
   world.controls().autoRotate = true;
-  world.controls().autoRotateSpeed = 0.35;
+  world.controls().autoRotateSpeed = -0.2; // the sign sets the direction
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
   world.controls().addEventListener("end", () => { S.dragging = false; });
   refreshGlobe();
@@ -721,6 +799,8 @@ function initGlobe() {
   fit();
   whenGlobeDrawn(() => {
     $("loading").remove();
+    document.body.classList.add("globe-drawn");
+    setTimeout(() => $("static")?.remove(), 900);
     S.globeDrawn = true;
     markReady();
     // If the YouTube player never loads (blocked, offline), open up anyway after 10 s.
@@ -792,6 +872,8 @@ function setPlaying(playing) {
   });
   document.querySelectorAll(".lamp").forEach(l => l.classList.toggle("on", playing));
   if (playing) document.body.classList.remove("await-play");
+  S.playing = playing;
+  if (playing) startVisualizer();
 }
 
 // Set the elapsed-time readouts (grille and dial) to t seconds.
@@ -834,7 +916,7 @@ function startRound() {
   S.answered = false; S.selected = null; S.guesses = [];
   $("round-label").textContent = `${S.puzzle.date} · Round ${S.round + 1} of ${S.puzzle.rounds.length}`;
   $("cover").hidden = false;
-  $("pick").textContent = "Spin the globe and select the country you think this song is from.";
+  $("pick").textContent = "Spin the globe and select the country you think the song is from.";
   renderTries();
   $("guess").disabled = true; setGuessLabel(); $("guess").onclick = submitGuess;
   $("result").innerHTML = ""; $("error").textContent = ""; showTime(0);
@@ -998,6 +1080,97 @@ function showSummary() {
   $("stamps").innerHTML = "";
 }
 
+
+// ---------- visualizer ----------
+// The page can't hear the YouTube player (a cross-origin frame), so the ring is driven by a fake
+// spectrum: lows punch on a ~112 BPM beat, highs flicker, with occasional swells. It only runs
+// while a song plays, then until the bars have died away.
+const VIZ = { bars: 100, reach: 40, thick: 3, bright: 0.25, inner: 36, seg: 7, gap: 3, phoneScale: 0.62,
+              lo: [255, 179, 71], hi: [255, 110, 70] };
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+// A fake spectrum of n bands (0 = lowest): call it each frame with the time in seconds.
+function makeSpectrum(n) {
+  const v = new Float32Array(n), target = new Float32Array(n).map(() => Math.random());
+  const beat = 60 / 112;
+  let swell = 0.7;
+  return (t, playing) => {
+    const kick = Math.exp(-((t % beat) / beat) * 6);
+    const snare = Math.exp(-(((t + beat / 2) % (beat * 2)) / beat) * 8);
+    if (Math.random() < 0.006) swell = 0.45 + Math.random() * 0.55;
+    for (let i = 0; i < n; i++) {
+      const f = i / (n - 1);
+      if (Math.random() < 0.06 + f * 0.12) target[i] = Math.random();
+      let goal = target[i] * (0.75 - f * 0.35) + kick * Math.max(0, 0.9 - f * 2.2)
+               + snare * 0.35 * Math.exp(-((f - 0.55) ** 2) / 0.02);
+      goal = playing ? Math.min(1, goal * (0.5 + swell * 0.6)) : 0;
+      v[i] += (goal - v[i]) * (goal > v[i] ? 0.55 : 0.12);
+    }
+    return v;
+  };
+}
+const spectrum = makeSpectrum(48);
+
+// The band for position p (0..1, clockwise from the top) on the ring: lows at the top and
+// bottom, highs at the sides, mirrored left and right.
+function ringBand(spec, p) {
+  const q = Math.abs(((p + 0.25) % 1) - 0.5) * 2, f = Math.abs(q - 0.5) * 2;
+  return spec[Math.min(spec.length - 1, Math.floor((1 - f) * spec.length * 0.9))];
+}
+
+// Draw the ring centred on (cx, cy): each bar a stack of LED segments, hotter toward the tip,
+// brightest just behind the rotating sweep. scale shrinks it for the phone's smaller knob.
+function drawRing(ctx, cx, cy, spec, t, scale) {
+  const seg = VIZ.seg * scale, gap = VIZ.gap * scale, inner = VIZ.inner * scale, reach = VIZ.reach * scale;
+  const steps = Math.max(1, reach / (seg + gap)), sweep = (t * 1.4) % (Math.PI * 2);
+  const mix = k => VIZ.lo.map((x, i) => Math.round(x + (VIZ.hi[i] - x) * k));
+  ctx.lineCap = "butt";
+  ctx.lineWidth = VIZ.thick * (scale < 1 ? 0.75 : 1);
+  for (let i = 0; i < VIZ.bars; i++) {
+    const p = i / VIZ.bars, a = p * Math.PI * 2 - Math.PI / 2, v = ringBand(spec, p);
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const behind = ((sweep - p * Math.PI * 2) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    const boost = 0.35 + 1.2 * Math.exp(-behind * 2.2);
+    const count = Math.floor((4 + v * reach) / (seg + gap));
+    for (let k = 0; k < count; k++) {
+      const r0 = inner + k * (seg + gap), c = mix(Math.min(1, (k / steps) * 1.3));
+      ctx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, (0.25 + v * 0.75) * VIZ.bright * boost)})`;
+      ctx.beginPath(); ctx.moveTo(cx + cos * r0, cy + sin * r0); ctx.lineTo(cx + cos * (r0 + seg), cy + sin * (r0 + seg)); ctx.stroke();
+    }
+  }
+}
+
+// One frame around whichever knob is showing (grille or dial). Each layer's canvas is a square
+// just big enough for the ring, moved over the knob within its box (#cover, #radio, #globe-area);
+// a layer whose box the ring doesn't reach is skipped. Drawn at no more than 2× pixel density.
+let vizRunning = false;
+function drawVisualizer(now) {
+  const t = now / 1000, spec = spectrum(t, S.playing), scale = phone.matches ? VIZ.phoneScale : 1;
+  const knob = phone.matches ? $("knob") : $("play"), kb = knob.getBoundingClientRect();
+  const kx = kb.left + kb.width / 2, ky = kb.top + kb.height / 2, dpr = Math.min(devicePixelRatio || 1, 2);
+  const size = Math.ceil(2 * (VIZ.inner + VIZ.reach + VIZ.seg) * scale) + 8, half = size / 2, px = Math.round(size * dpr);
+  for (const c of document.querySelectorAll(".viz")) {
+    const box = c.offsetParent, ctx = c.getContext("2d");
+    // On phones the grille sits in the hidden player behind the page: nothing to draw there.
+    if (!box || !kb.width || (phone.matches && c.id === "viz-grille")) { c.style.width = c.style.height = "0"; continue; }
+    const r = box.getBoundingClientRect();
+    const reaches = kx + half > r.left && kx - half < r.right && ky + half > r.top && ky - half < r.bottom;
+    if (!reaches) { c.style.width = c.style.height = "0"; continue; }
+    Object.assign(c.style, { width: `${size}px`, height: `${size}px`,
+      left: `${kx - half - r.left - box.clientLeft + box.scrollLeft}px`, top: `${ky - half - r.top - box.clientTop + box.scrollTop}px` });
+    if (c.width !== px) c.width = c.height = px;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    drawRing(ctx, half, half, spec, t, scale);
+  }
+  if (S.playing || spec.some(x => x > 0.02)) requestAnimationFrame(drawVisualizer);
+  else vizRunning = false;
+}
+function startVisualizer() {
+  if (vizRunning || reducedMotion.matches) return;
+  vizRunning = true;
+  requestAnimationFrame(drawVisualizer);
+}
 
 // ---------- phone layout ----------
 // Phone-only behaviour (the layout itself is the max-width: 640px block in <style>), and
