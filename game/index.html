@@ -363,6 +363,8 @@
     #knob, .dial-time { transition: opacity 0.45s 0.15s; }
     .dial-lamp { transition: opacity 0.45s 0.15s, background 0.3s, box-shadow 0.3s; }
     body:not(.ready) :is(#knob, .dial-lamp, .dial-time) { opacity: 0; pointer-events: none; }
+    /* The end-of-day screen has nothing to play: no knob, lamp or time by the dial. */
+    body.finished :is(#knob, .dial-lamp, .dial-time) { display: none; }
     .dial { height: 34px; margin-top: 0; padding: 4px 52px 3px 10px; border-radius: 7px; }
     .dial-row { font-size: 8.5px; }
     .ticks { height: 5px; background: repeating-linear-gradient(90deg, var(--dial-ink) 0 1px, transparent 1px 6px); }
@@ -1071,7 +1073,7 @@ function shareText(total) {
   const rows = S.results.map((x, i) => `Round ${i + 1}: `
     + "🚫".repeat(x.guesses.filter(g => g.km > 0).length)
     + (x.solvedOn ? "✅" : ""));
-  return [...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
+  return ["🌐 🎵 ROVE.FM 🎶 🌐", "", ...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
     "Can you do better?", "svm1.github.io/rove-fm"].join("\n");
 }
 
@@ -1129,6 +1131,7 @@ function showSummary() {
   $("share").onclick = () => copyText(shareText(total)).then(
     () => flashLabel($("share"), "Copied!"), () => flashLabel($("share"), "Couldn't copy"));
   $("round-label").textContent = `${S.puzzle.date} · Finished`;
+  document.body.classList.add("finished");
   world.arcsData([]); world.controls().autoRotate = true;
   if (S.player && S.player.stopVideo) S.player.stopVideo();
   setPlaying(false);
@@ -1277,7 +1280,7 @@ async function loadPuzzle(date) {
   }
   S.puzzle = await res.json();
   S.round = 0; S.results = [];
-  $("play-area").hidden = false; $("summary").hidden = true;
+  $("play-area").hidden = false; $("summary").hidden = true; document.body.classList.remove("finished");
   startRound();
   setFold();
   markReady();
