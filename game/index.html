@@ -551,7 +551,7 @@ const NAMES = { RU: "Russia", KR: "South Korea", KP: "North Korea", LA: "Laos", 
 const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
-const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf, &dpr=N, &coast=builtin, &decay=N
+const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf (with &dpr=N)
 // All page state: country shapes (and by ISO code), the hovered and selected country,
 // the loaded puzzle, the current round, this round's guesses, results so far, the YouTube player,
 // and whether the globe has been drawn (the controls wait for it: markReady).
@@ -753,46 +753,6 @@ function showTapTip(name, x, y) {
 }
 function hideTapTip() { $("tap-tip").classList.remove("on"); }
 
-// Touch screens: the spin after a flick, advanced by elapsed time. OrbitControls' own coast
-// (damping) moves the camera a fixed fraction per rendered frame, so on a phone, where frame times
-// are uneven (GPU load, and the browser lowering its refresh rate once the finger lifts), the coast
-// visibly sped up and slowed down. Dragging itself is untouched. On release: measure the spin over
-// the last ~100 ms, cancel the built-in coast, and run this one, decaying exponentially (about
-// what the built-in damping gives at 60 fps), until it's negligible or the globe is touched again.
-function timeBasedCoast() {
-  const controls = world.controls(), samples = [];
-  let raf = 0;
-  const DECAY = +DEBUG.get("decay") || 6.3; // per second; ?decay=N (debug) to try others
-  const stop = () => { cancelAnimationFrame(raf); raf = 0; };
-  controls.addEventListener("start", () => { stop(); samples.length = 0; });
-  controls.addEventListener("change", () => {
-    if (!S.dragging) return;
-    const now = performance.now(), { lat, lng } = world.pointOfView();
-    samples.push({ t: now, lat, lng });
-    while (samples.length > 2 && now - samples[0].t > 100) samples.shift();
-  });
-  controls.addEventListener("end", () => {
-    if (samples.length < 2) return;
-    const a = samples[0], b = samples[samples.length - 1], dt = (b.t - a.t) / 1000;
-    samples.length = 0;
-    if (dt <= 0 || performance.now() - b.t > 80) return; // the finger had stopped before lifting
-    let vLat = (b.lat - a.lat) / dt, vLng = ((b.lng - a.lng + 540) % 360 - 180) / dt;
-    if (Math.hypot(vLat, vLng) < 5) return;
-    controls._sphericalDelta?.set(0, 0, 0); // cancel OrbitControls' frame-based coast
-    let last = performance.now();
-    const step = now => {
-      const t = Math.min(0.05, (now - last) / 1000); last = now;
-      const pov = world.pointOfView(), k = Math.exp(-DECAY * t);
-      // Distance travelled this frame: the integral of v·e^(−DECAY·t) over the frame.
-      const f = (1 - k) / DECAY;
-      world.pointOfView({ lat: Math.max(-85, Math.min(85, pov.lat + vLat * f)), lng: pov.lng + vLng * f, altitude: pov.altitude });
-      vLat *= k; vLng *= k;
-      raf = Math.hypot(vLat, vLng) > 0.5 ? requestAnimationFrame(step) : 0;
-    };
-    raf = requestAnimationFrame(step);
-  });
-}
-
 // Choose a country as this round's guess (a click, or a tap on touch screens), unless the round
 // is over or it was already missed.
 function pickCountry(f) {
@@ -880,7 +840,11 @@ function initGlobe() {
   world.controls().autoRotateSpeed = -0.2; // the sign sets the direction
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
   world.controls().addEventListener("end", () => { S.dragging = false; });
-  if (noHover.matches && DEBUG.get("coast") !== "builtin") timeBasedCoast(); // ?coast=builtin: debug comparison
+  // No coasting: when the finger or mouse lets go, the globe stops where it is. OrbitControls'
+  // damping still smooths the drag itself; only the spin left over at release is cancelled. (On
+  // phones the coast ran at 60 Hz after a 120 Hz drag, as the screen drops its refresh rate once
+  // the finger lifts, and looked like a stutter.)
+  world.controls().addEventListener("end", () => world.controls()._sphericalDelta?.set(0, 0, 0));
   refreshGlobe();
   // Size the globe to its region, and keep it sized as the window or the game box changes.
   // On phones the dock's prompt area collapses on the reveal and comes back next round, which
@@ -1393,7 +1357,7 @@ init();
 // (>34 ms) refreshes at 60 Hz, whether the globe is being dragged, coasting or idle, and the
 // globe's pixel ratio and canvas size; and a 3-second graph of frame time (amber) and of how far
 // the globe turned each frame (cyan). A stutter shows as a jagged cyan line. &dpr=N sets the
-// globe's pixel ratio; &coast=builtin turns off timeBasedCoast, for comparison.
+// globe's pixel ratio.
 if (DEBUG.has("perf")) {
   const box = document.createElement("div");
   box.style.cssText = "position:fixed;left:8px;top:8px;z-index:9999;pointer-events:none;padding:6px 8px;border-radius:6px;" +
@@ -1421,8 +1385,7 @@ if (DEBUG.has("perf")) {
       text.textContent =
         `fps ${sec.length}  last ${dt.toFixed(1)}ms  worst ${Math.max(...sec.map(f => f.dt)).toFixed(1)}ms\n` +
         `>20ms ${sec.filter(f => f.dt > 20).length}  >34ms ${sec.filter(f => f.dt > 34).length}  ${state}\n` +
-        `pixel ratio ${r ? r.getPixelRatio() : "–"} (screen ${devicePixelRatio})  ${size}\n` +
-        `coast ${DEBUG.get("coast") === "builtin" ? "built-in" : noHover.matches ? `time-based, decay ${+DEBUG.get("decay") || 6.3}/s` : "built-in (desktop)"}`;
+        `pixel ratio ${r ? r.getPixelRatio() : "–"} (screen ${devicePixelRatio})  ${size}`;
       g.clearRect(0, 0, graph.width, graph.height);
       const W = graph.width, H = graph.height, x = f => W - (now - f.t) / 3000 * W;
       g.fillStyle = "rgba(255,255,255,0.08)";
