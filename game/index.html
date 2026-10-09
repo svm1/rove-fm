@@ -276,10 +276,6 @@
   #globe .float-tooltip-kap { background: none; padding: 0; border-radius: 0; }
   .tip { background: var(--dial); color: var(--dial-ink); border-radius: 999px; padding: 3px 12px 4px;
     font: 400 16px var(--display); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
-  /* Touch screens: the label for a tapped country, just above the finger (showTapTip). */
-  #tap-tip { position: absolute; z-index: 3; pointer-events: none; transform: translate(-50%, calc(-100% - 14px));
-    opacity: 0; transition: opacity 0.3s; }
-  #tap-tip.on { opacity: 1; transition: opacity 0.1s; }
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-family: var(--type); pointer-events: none; animation: breathe 1.8s ease-in-out infinite; }
   /* While loading, faint static fills the globe's spot (drawn by the early script); it fades out
@@ -475,7 +471,6 @@
   <div class="globe-edge bottom" aria-hidden="true"></div>
   <div id="static" aria-hidden="true"><canvas class="grain"></canvas><canvas class="grain"></canvas><canvas class="grain"></canvas><canvas class="grain"></canvas></div>
   <div id="loading">Scanning the shortwave…</div>
-  <div id="tap-tip"><div class="tip"></div></div>
   <canvas id="viz-out" class="viz" aria-hidden="true"></canvas>
   <div id="result" class="postcard" aria-live="polite"></div>
 </div>
@@ -751,19 +746,6 @@ function homeView() {
 // True on devices whose main input can't hover (phones, tablets).
 const noHover = matchMedia("(hover: none)");
 
-// Touch screens: show a tapped country's name just above the finger, like the mouse's hover label.
-// It fades after 2.5 s (the turning globe soon carries the country away from it) or on the next touch.
-let tapTipTimer = 0;
-function showTapTip(name, x, y) {
-  const tip = $("tap-tip"), area = $("globe-area").getBoundingClientRect();
-  tip.firstElementChild.textContent = name;
-  Object.assign(tip.style, { left: `${x - area.left}px`, top: `${y - area.top}px` });
-  tip.classList.add("on");
-  clearTimeout(tapTipTimer);
-  tapTipTimer = setTimeout(hideTapTip, 2500);
-}
-function hideTapTip() { $("tap-tip").classList.remove("on"); }
-
 // Choose a country as this round's guess (a click, or a tap on touch screens), unless the round
 // is over or it was already missed.
 function pickCountry(f) {
@@ -808,7 +790,7 @@ function initGlobe() {
     .pathTransitionDuration(0)
     // Borders are drawn over the countries; let hovers and clicks reach the country below.
     .pointerEventsFilter(obj => obj.__globeObjType !== "path")
-    // Hover labels with the mouse; touch screens show the same label on a tap (showTapTip).
+    // On touch screens the label follows taps, so it names the country just selected.
     .polygonLabel(f => `<div class="tip">${f.properties.name}</div>`)
     .onPolygonHover(f => {
       // Countries slide under the cursor while the globe turns; don't recolour mid-drag.
@@ -820,25 +802,6 @@ function initGlobe() {
       refreshGlobe();
     })
     .onPolygonClick(pickCountry);
-  // Touch screens: no pointer raycasting. globe.gl tests the last pointer position against every
-  // country on each tick unless a drag is in progress, for hover; after a flick the finger's last
-  // point stays "over" the coasting globe, and those tests made the spin stutter. Phones have no
-  // hover anyway, so taps are handled here instead: a short touch that barely moves finds the
-  // country under it (toGlobeCoords, then d3.geoContains), once per tap, labels it and picks it.
-  if (noHover.matches) {
-    world.enablePointerInteraction(false);
-    const el = $("globe");
-    let down = null;
-    el.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; hideTapTip(); });
-    el.addEventListener("pointerup", e => {
-      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8 || performance.now() - down.t > 500) return;
-      const r = el.getBoundingClientRect(), at = world.toGlobeCoords(e.clientX - r.left, e.clientY - r.top);
-      const f = at && S.features.find(f => d3.geoContains(f, [at.lng, at.lat]));
-      if (!f) return;
-      showTapTip(f.properties.name, e.clientX, e.clientY);
-      pickCountry(f);
-    });
-  }
   world.globeMaterial().color.set(C.ocean);
   // globe.gl draws the grid light grey; tint it cream. It's the scene's only LineSegments.
   world.scene().traverse(o => {
