@@ -481,6 +481,17 @@
 </div>
 
 <script>
+// If a script error or a rejected promise happens while the page is still loading, show it in
+// place of the loading text (with its line), instead of the page hanging silently.
+function showLoadError(msg) {
+  const el = document.getElementById("loading");
+  if (!el) return;
+  el.style.animation = "none"; el.style.padding = "0 16px"; el.style.textAlign = "center";
+  el.textContent = `Something went wrong: ${msg}`;
+}
+addEventListener("error", e => showLoadError(`${e.message} (line ${e.lineno})`));
+addEventListener("unhandledrejection", e => showLoadError(String(e.reason?.stack || e.reason)));
+
 // While loading, how much of the game box hides below the dial: the distance from the dial line
 // to the box's bottom edge, as --fold (CSS). On phones the box is the dock (#radio). This runs
 // here, before the libraries below download, so the box is folded from the first paint; again
@@ -789,7 +800,10 @@ function initGlobe() {
     // Borders are their own line layer (borderLines), so no outline on the shapes.
     .polygonStrokeColor(() => null)
     .pathsData(borderLines(S.features))
-    .pathPointLat(p => p[1]).pathPointLng(p => p[0]).pathPointAlt(0.0061)
+    // Borders float 0.2 units above the land (altitude 0.008 vs 0.006, radius 100). At 0.0061 they
+    // were 0.01 above it, closer than the depth buffer can tell apart from the zoomed-out camera
+    // (~0.1 units at 300-450 away), so the land won pixels along them: gaps that flickered as it turned.
+    .pathPointLat(p => p[1]).pathPointLng(p => p[0]).pathPointAlt(0.008)
     .pathColor(() => C["land-edge"])
     .pathTransitionDuration(0)
     // Borders are drawn over the countries; let hovers and clicks reach the country below.
