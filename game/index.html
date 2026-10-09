@@ -356,7 +356,7 @@
 
 <div id="globe-area">
   <div id="globe"></div>
-  <div id="loading">Loading the globe…</div>
+  <div id="loading">Scanning the shortwave…</div>
   <div id="result" class="postcard" aria-live="polite"></div>
 </div>
 
@@ -632,7 +632,26 @@ function initGlobe() {
   const fit = () => world.width(area.clientWidth).height(area.clientHeight);
   new ResizeObserver(fit).observe(area);
   fit();
-  $("loading").remove();
+  whenGlobeDrawn(() => $("loading").remove());
+}
+
+// Call `done` once the globe is on screen. globe.gl builds the country shapes after initGlobe()
+// returns, which takes a few seconds, so wait until every shape has its geometry, then two more
+// frames for it to be drawn. Gives up waiting after 15 s, in case globe.gl changes how it
+// stores the shapes.
+function whenGlobeDrawn(done) {
+  const giveUp = performance.now() + 15000;
+  const check = () => {
+    let shapes = 0, built = 0;
+    world.scene().traverse(o => {
+      if (o.__globeObjType !== "polygon") return;
+      shapes++;
+      if (o.children[0]?.geometry?.attributes?.position?.count) built++;
+    });
+    if ((shapes && built === shapes) || performance.now() > giveUp) requestAnimationFrame(() => requestAnimationFrame(done));
+    else requestAnimationFrame(check);
+  };
+  check();
 }
 
 // ---------- YouTube ----------
