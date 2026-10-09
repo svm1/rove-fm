@@ -718,9 +718,10 @@ function borderLines(features) {
 // Camera altitude (in globe radii) at the start. Desktop starts closer than globe.gl's default
 // (2.5): the globe fills more of its region, and borders flicker less than when zoomed far out;
 // the reveal pulls back to 1.9. A phone's region is narrow and tall, so 1.4 made the globe 167%
-// of the screen width; phones use PHONE_ALTITUDE (109%) for the start and the reveal alike.
+// of the screen width. Phones start at 1.8 (the globe 25% bigger than at 2.5, ~136% of the
+// width: its size goes with 1 / (1 + altitude)) and the reveal pulls back to PHONE_ALTITUDE.
 const PHONE_ALTITUDE = 2.5;
-function startAltitude() { return phone.matches ? PHONE_ALTITUDE : 1.4; }
+function startAltitude() { return phone.matches ? 1.8 : 1.4; }
 
 // Where the globe starts: facing the player's region, from the browser's time zone (TZ_COORDS,
 // timezones.js), so no location prompt. An unknown zone gives just a longitude, from the UTC
