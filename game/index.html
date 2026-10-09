@@ -551,6 +551,7 @@ const NAMES = { RU: "Russia", KR: "South Korea", KP: "North Korea", LA: "Laos", 
 const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
+const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf (with &dpr=N, &coast=builtin)
 // All page state: country shapes (and by ISO code), the hovered and selected country,
 // the loaded puzzle, the current round, this round's guesses, results so far, the YouTube player,
 // and whether the globe has been drawn (the controls wait for it: markReady).
@@ -872,13 +873,14 @@ function initGlobe() {
   // Render at the screen's own resolution, up to 2×. At 1.5× on a Retina screen the browser
   // upscaled the canvas and the borders looked fuzzy. The extra pixels are offset by the
   // border layer drawing only land borders (209 lines instead of ~1,600 outlines).
-  world.renderer().setPixelRatio(Math.min(devicePixelRatio, 2));
+  // ?dpr=N (debug, with ?perf) overrides it to compare rendering costs.
+  world.renderer().setPixelRatio(+DEBUG.get("dpr") || Math.min(devicePixelRatio, 2));
   world.pointOfView({ ...homeView(), altitude: startAltitude() });
   world.controls().autoRotate = true;
   world.controls().autoRotateSpeed = -0.2; // the sign sets the direction
   world.controls().addEventListener("start", () => { S.dragging = true; world.controls().autoRotate = false; });
   world.controls().addEventListener("end", () => { S.dragging = false; });
-  if (noHover.matches) timeBasedCoast();
+  if (noHover.matches && DEBUG.get("coast") !== "builtin") timeBasedCoast(); // ?coast=builtin: debug comparison
   refreshGlobe();
   // Size the globe to its region, and keep it sized as the window or the game box changes.
   // On phones the dock's prompt area collapses on the reveal and comes back next round, which
@@ -1386,9 +1388,59 @@ async function init() {
 
 init();
 
+// Debug: open the page with ?perf for a frame-timing overlay (top left). It shows the frame rate,
+// the latest and worst frame times, how many frames in the last second missed one (>20 ms) or two
+// (>34 ms) refreshes at 60 Hz, whether the globe is being dragged, coasting or idle, and the
+// globe's pixel ratio and canvas size; and a 3-second graph of frame time (amber) and of how far
+// the globe turned each frame (cyan). A stutter shows as a jagged cyan line. &dpr=N sets the
+// globe's pixel ratio; &coast=builtin turns off timeBasedCoast, for comparison.
+if (DEBUG.has("perf")) {
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;left:8px;top:8px;z-index:9999;pointer-events:none;padding:6px 8px;border-radius:6px;" +
+    "background:rgba(0,0,0,0.78);color:#f1e3c6;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre";
+  const text = document.createElement("div"), graph = document.createElement("canvas");
+  graph.width = 180 * 2; graph.height = 50 * 2; graph.style.cssText = "display:block;width:180px;height:50px;margin-top:4px";
+  box.append(text, graph); document.body.appendChild(box);
+  const g = graph.getContext("2d"), frames = [];
+  let last = performance.now(), prev = null, shown = 0;
+  (function tick(now) {
+    const dt = now - last; last = now;
+    let turn = 0, state = "idle";
+    if (typeof world !== "undefined" && world) {
+      const pov = world.pointOfView();
+      if (prev) turn = Math.hypot(pov.lat - prev.lat, ((pov.lng - prev.lng + 540) % 360) - 180);
+      prev = pov;
+      state = S.dragging ? "drag" : turn > 0.05 ? "coast" : "idle";
+    }
+    frames.push({ t: now, dt, turn, state });
+    while (frames.length && now - frames[0].t > 3000) frames.shift();
+    if (now - shown > 250) {
+      shown = now;
+      const sec = frames.filter(f => now - f.t <= 1000), r = world?.renderer?.();
+      const size = r ? `${r.domElement.width}×${r.domElement.height}` : "–";
+      text.textContent =
+        `fps ${sec.length}  last ${dt.toFixed(1)}ms  worst ${Math.max(...sec.map(f => f.dt)).toFixed(1)}ms\n` +
+        `>20ms ${sec.filter(f => f.dt > 20).length}  >34ms ${sec.filter(f => f.dt > 34).length}  ${state}\n` +
+        `pixel ratio ${r ? r.getPixelRatio() : "–"} (screen ${devicePixelRatio})  ${size}\n` +
+        `coast ${DEBUG.get("coast") === "builtin" ? "built-in" : noHover.matches ? "time-based" : "built-in (desktop)"}`;
+      g.clearRect(0, 0, graph.width, graph.height);
+      const W = graph.width, H = graph.height, x = f => W - (now - f.t) / 3000 * W;
+      g.fillStyle = "rgba(255,255,255,0.08)";
+      frames.forEach(f => { if (f.state !== "idle") g.fillRect(x(f), 0, 2, H); });
+      g.strokeStyle = "rgba(255,255,255,0.25)"; g.beginPath(); g.moveTo(0, H - 16.7 / 50 * H); g.lineTo(W, H - 16.7 / 50 * H); g.stroke();
+      const line = (color, val) => { g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+        frames.forEach((f, i) => { const y = H - Math.min(1, val(f)) * H; i ? g.lineTo(x(f), y) : g.moveTo(x(f), y); }); g.stroke(); };
+      line("#ffb347", f => f.dt / 50);
+      const maxTurn = Math.max(0.5, ...frames.map(f => f.turn));
+      line("#78dcf0", f => f.turn / maxTurn);
+    }
+    requestAnimationFrame(tick);
+  })(last);
+}
+
 // Debug: open the page with ?fonts to try other fonts for the body text (--body), or for
 // the help line alone, from a menu in the bottom-left corner. The first entry is the current font.
-if (new URLSearchParams(location.search).has("fonts")) {
+if (DEBUG.has("fonts")) {
   const BODY = css("--body");
   const FONTS = ["Newsreader", "Barlow Semi Condensed", "Libre Baskerville", "Old Standard TT", "Lora", "Crimson Pro"];
   const link = document.createElement("link");
