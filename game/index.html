@@ -35,7 +35,7 @@
 <link rel="icon" href="favicon-32.png?v=3" type="image/png" sizes="32x32">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600&family=Courier+Prime:wght@400;700&family=Fascinate+Inline&family=Righteous&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=Courier+Prime:wght@400;700&family=Fascinate+Inline&family=Righteous&display=swap">
 <style>
   /* Look: "Bakelite & Airmail" (design/sketchbook.html, direction A). The game box is a 1950s
      walnut radio with an amber-lit dial, the globe an atlas, the reveal an airmail postcard,
@@ -68,7 +68,7 @@
     --card-tilt: -0.8deg;        /* the postcard's resting angle (phones tilt it the other way) */
     --title: "Fascinate Inline", Georgia, serif;   /* the wordmark: Art Deco with an inline */
     --display: "Righteous", system-ui, sans-serif; /* country names, hover labels, stamps */
-    --body: "Barlow Semi Condensed", system-ui, sans-serif;
+    --body: "Newsreader", Georgia, serif;
     --type: "Courier Prime", ui-monospace, monospace;   /* typewriter: details, numbers */
   }
   /* No tap highlight: on touch screens it flashed the whole screen, since the globe canvas fills it
@@ -189,7 +189,6 @@
             mask: radial-gradient(circle, transparent 1.6px, #000 2px) -3px -3px / 6px 6px,
                   linear-gradient(#000, #000) center / calc(100% - 6px) calc(100% - 6px) no-repeat; }
   .stamp .cc { font: 400 14px/1 var(--display); }
-  .stamp.skipped { color: var(--muted); background: #cbbd9f; }
   /* The end-of-day passport page shows bigger stamps. */
   .passport .stamps { gap: 10px; flex-wrap: wrap; }
   .passport .stamp { width: 62px; height: 72px; font-size: 11px; }
@@ -249,7 +248,6 @@
                     linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 4px) no-repeat;
               mask: radial-gradient(circle, transparent 1.1px, #000 1.5px) -2px -2px / 4px 4px,
                     linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 4px) no-repeat; }
-    .stamp.done.skipped { box-shadow: inset 0 0 0 2.5px #cbbd9f, inset 0 0 0 3.5px var(--muted); }
     .passport .stamp { width: 46px; height: 54px; }
     .passport .stamp > div { font-size: 9px; }
     .passport .stamp .cc { font-size: 16px; }
@@ -268,13 +266,12 @@
     #controls .row { display: contents; }
     #play { width: 46px; height: 46px; padding: 0; flex: none; font-size: 15px; }
     #play .lbl { display: none; }
-    #skip { padding: 11px 14px; flex: none; }
     #guess { width: auto !important; flex: 1; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #pick { order: 1; flex-basis: 100%; margin: 0; min-height: 0; text-align: center; }
     #tries { order: 1; flex-basis: 100%; margin: 0; text-align: center; }
     body.revealed #pick, body.revealed #tries { display: none; }
     #error { flex-basis: 100%; margin-top: 0; }
-    body.revealed #skip, body.revealed #time, body.revealed #lamp { display: none; }
+    body.revealed #time, body.revealed #lamp { display: none; }
     body.revealed #mapbtn { display: block; flex: none; padding: 11px 14px; }
 
     /* Before the guess the player is hidden behind the page (it only needs to play sound);
@@ -335,7 +332,7 @@
   <div id="play-area">
     <div id="player-wrap">
       <div id="player"></div>
-      <div id="cover"><div class="note">♪</div><div>Hidden until the round ends</div></div>
+      <div id="cover"><div class="note">♪</div></div>
     </div>
     <div id="controls">
       <div class="row spread">
@@ -344,7 +341,6 @@
           <span id="time">0:00</span>
           <span id="lamp" class="lamp" title="On air"></span>
         </div>
-        <button id="skip" title="Give up on this round and see the answer (0 points)" disabled>Skip</button>
         <button id="mapbtn" type="button">Show map</button>
       </div>
       <div id="pick" class="sub">Spin the globe and click the country you think this song is from.</div>
@@ -663,7 +659,7 @@ function cueRound() {
           const why = { 2: "bad video ID", 5: "player error", 100: "video removed or private",
                         101: "embedding disabled by the owner", 150: "embedding disabled by the owner" }[e.data]
                       || `error ${e.data}`;
-          $("error").textContent = `This song can't be played here (${why}). Use Skip.`;
+          $("error").textContent = `This song can't be played here (${why}). You can still guess.`;
         },
       },
     });
@@ -700,7 +696,7 @@ function stampsHtml() {
   return S.puzzle.rounds.map((r, i) => {
     const x = S.results[i];
     if (!x) return `<div class="stamp${i === S.round && !S.answered ? " now" : ""}" title="Round ${i + 1}">${i + 1}</div>`;
-    return `<div class="stamp done${x.skipped ? " skipped" : ""}" title="Round ${i + 1}: ${r.country_name}, ${x.points.toLocaleString()} points">
+    return `<div class="stamp done" title="Round ${i + 1}: ${r.country_name}, ${x.points.toLocaleString()} points">
       <div><div class="cc">${r.country}</div>${x.points.toLocaleString()}</div></div>`;
   }).join("");
 }
@@ -713,7 +709,6 @@ function startRound() {
   $("pick").textContent = `Spin the globe and ${noHover.matches ? "tap" : "click"} the country you think this song is from.`;
   $("tries").innerHTML = "";
   $("guess").disabled = true; setGuessLabel(); $("guess").onclick = submitGuess;
-  $("skip").disabled = false;
   $("result").innerHTML = ""; $("error").textContent = ""; $("time").textContent = "0:00";
   document.body.classList.remove("revealed", "map-view"); $("mapbtn").textContent = "Show map";
   placePlayer();
@@ -738,22 +733,20 @@ function renderTries() {
     `<div><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
 }
 
-// Score the round (skipped = true for Skip, 0 points), reveal the song and the answer, fly the
-// globe to it, and turn the Guess button into "Next round" (or "See your score" after the last round).
-function finishRound(skipped = false) {
+// Score the round, reveal the song and the answer, fly the globe to it, and turn the Guess
+// button into "Next round" (or "See your score" after the last round).
+function finishRound() {
   const r = currentRound();
   const ans = S.byCode.get(r.country)?.properties;
   S.answered = true; S.selected = null;
   if (S.player && S.player.pauseVideo) S.player.pauseVideo();
   $("cover").hidden = true;
-  $("skip").disabled = true;
 
-  const res = skipped || !S.guesses.length || !ans ? { km: null, points: 0, solvedOn: null } : roundScore(S.guesses);
-  S.results.push({ round: r, guesses: S.guesses, skipped, ...res });
+  const res = !S.guesses.length || !ans ? { km: null, points: 0, solvedOn: null } : roundScore(S.guesses);
+  S.results.push({ round: r, guesses: S.guesses, ...res });
 
   const closest = S.guesses.find(g => g.km === res.km);
-  const verdict = skipped ? "Skipped"
-    : res.solvedOn === 1 ? "Spot on!"
+  const verdict = res.solvedOn === 1 ? "Spot on!"
     : res.solvedOn ? `Got it on guess ${res.solvedOn}`
     : closest ? `Closest: ${closest.name} · ${Math.round(res.km).toLocaleString()} km off`
     : "No score";
@@ -836,13 +829,12 @@ function flashLabel(btn, label) {
 }
 
 // HTML for a finished round's guesses in order: misses struck through with their distance, then
-// the answer, or "out of guesses" (or "Skipped") when it wasn't found.
+// the answer, or "out of guesses" when it wasn't found.
 function routeHtml(x) {
   const chips = x.guesses.map(g => g.km === 0
     ? `<span class="chip hit">✓ ${g.name}</span>`
     : `<span class="chip miss">${g.name} <small>${Math.round(g.km).toLocaleString()} km</small></span>`);
-  if (x.skipped) chips.push(`<span class="chip end">Skipped</span>`);
-  else if (!x.solvedOn) chips.push(`<span class="chip end">out of guesses</span>`);
+  if (!x.solvedOn) chips.push(`<span class="chip end">out of guesses</span>`);
   return `<div class="route">${chips.join('<span class="arr">→</span>')}</div>`;
 }
 
@@ -968,11 +960,33 @@ async function init() {
     if (!S.playerReady) return;
     S.player.getPlayerState() === YT.PlayerState.PLAYING ? S.player.pauseVideo() : S.player.playVideo();
   };
-  $("skip").onclick = () => finishRound(true);
   await loadPuzzle(pick);
 }
 
 init();
+
+// Debug: open the page with ?fonts to try other fonts for the body text (--body), or for
+// the help line alone, from a menu in the bottom-left corner. The first entry is the current font.
+if (new URLSearchParams(location.search).has("fonts")) {
+  const BODY = css("--body");
+  const FONTS = ["Newsreader", "Barlow Semi Condensed", "Libre Baskerville", "Old Standard TT", "Lora", "Crimson Pro"];
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?" + FONTS.slice(1).map(f => `family=${f.replace(/ /g, "+")}:wght@400;600`).join("&") + "&display=swap";
+  document.head.appendChild(link);
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:9999;display:flex;gap:8px;align-items:center;padding:8px 10px;background:#000c;border:1px solid #fff4;border-radius:8px;font:12px system-ui;color:#fff";
+  box.innerHTML = `<select id="fd-font">${FONTS.map(f => `<option>${f}</option>`).join("")}</select>
+    <label><input type="checkbox" id="fd-only"> help line only</label>`;
+  document.body.appendChild(box);
+  const apply = () => {
+    const stack = `"${$("fd-font").value}", Georgia, serif`, only = $("fd-only").checked;
+    document.documentElement.style.setProperty("--body", only ? BODY : stack);
+    $("pick").style.fontFamily = only ? stack : "";
+  };
+  $("fd-font").onchange = apply;
+  $("fd-only").onchange = apply;
+}
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
 </body>
