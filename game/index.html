@@ -219,7 +219,7 @@
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-family: var(--type); pointer-events: none; }
   /* Phone-only pieces, hidden on desktop. */
-  #menu, #mapbtn, .pc-video, .postmark { display: none; }
+  #menu, #mapbtn, .pc-video { display: none; }
 
   /* ---------- Phone layout (design/sketchbook.html, "Phone layouts") ----------
      Everything phone-specific is in this block, so desktop is untouched. A slim header with the
@@ -284,13 +284,14 @@
       transition: opacity 0.25s, transform 0.25s; }
     body.map-view .postcard { opacity: 0; transform: translateY(-30px) rotate(var(--card-tilt)); pointer-events: none; }
     .pc-video { display: block; aspect-ratio: 16 / 9; border-radius: 6px; background: #1e140d; }
-    .postmark { display: grid; place-items: center; position: absolute; right: 12px; top: 40px; width: 74px; height: 74px;
-      border-radius: 50%; border: 2px solid rgba(47, 95, 158, 0.55); text-align: center; pointer-events: none;
-      font: 700 8px/1.35 var(--type); letter-spacing: 0.1em; color: rgba(47, 95, 158, 0.75); transform: rotate(-14deg); }
-    .postcard.slam .postmark { animation: thunk 0.3s 0.45s ease-out both; }
   }
-  /* The reveal postcard slams onto the globe, which jolts as it lands (all screen sizes). */
+  /* The reveal postcard slams onto the globe, which jolts as it lands, and the postmark is
+     stamped on it (all screen sizes). */
   .postcard.slam { animation: slam 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
+  .postmark { display: grid; place-items: center; position: absolute; right: 12px; top: 40px; width: 74px; height: 74px;
+    border-radius: 50%; border: 2px solid rgba(47, 95, 158, 0.55); text-align: center; pointer-events: none;
+    font: 700 8px/1.35 var(--type); letter-spacing: 0.1em; color: rgba(47, 95, 158, 0.75); transform: rotate(-14deg); }
+  .postcard.slam .postmark { animation: thunk 0.3s 0.45s ease-out both; }
   #globe-area.jolt { animation: jolt 0.3s 0.25s ease-out; }
   @keyframes slam {
     0% { opacity: 0; transform: translateY(-40px) scale(1.3) rotate(-8deg); }
