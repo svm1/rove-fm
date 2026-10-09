@@ -2,10 +2,12 @@
 <!--
   rove.FM ("where's this song from?"): the playable page for the daily puzzles.
 
-  Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 5 rounds. In each
-  round the player listens to a song, whose YouTube player is covered until the guess,
-  and clicks the country on a spinnable globe. Score: 5,000 for the right country, else
-  5000 × e^(−km / 2000) between country centre points.
+  Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 3 rounds. In each
+  round the player listens to a song, whose YouTube player is covered until the round ends,
+  and has up to 3 guesses to click the country on a spinnable globe; each miss shows its
+  distance and compass direction to the answer. Score: 5,000 / 3,000 / 1,500 for the right
+  country on guess 1 / 2 / 3; after 3 misses, 0.3 × 5000 × e^(−km / 2000) for the closest
+  guess, with km between country centre points.
 
   Run: `python3 -m http.server 8000` in the repo folder, then open http://localhost:8000/game/.
   Loads d3 and globe.gl from jsDelivr, the Natural Earth 1:50m country shapes, fonts from
@@ -57,7 +59,8 @@
     --hover: #9a7348;            /* a country under the cursor */
     --selected: #c8453a;         /* your pick, before and after the guess */
     --good: #ffb347;             /* the answer */
-    --bad: #c8453a;              /* a wrong guess */
+    --bad: #c8453a;              /* a wrong guess, after the round */
+    --tried: #6e2f27;            /* a wrong guess, while the round goes on */
     --land: #4a3726;
     --land-edge: #2a1e14;
     --ocean: #1d1611;
@@ -147,6 +150,10 @@
 
   #pick { margin: 10px 0 12px; min-height: 22px; }
   #pick b { color: #ff8a7d; }
+  /* The misses so far this round: country, distance and direction to the answer. */
+  #tries { display: grid; gap: 2px; margin: -4px 0 12px; font: 13px var(--type); color: var(--muted); }
+  #tries:empty { display: none; }
+  #tries .x { color: #ff8a7d; }
   .msg { color: #ff8a7d; font-size: 14px; margin-top: 8px; }
 
   /* The reveal: an airmail postcard with typewritten liner notes, laid on the globe's region
@@ -194,6 +201,16 @@
   table { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 14px; }
   td { padding: 6px 2px; border-bottom: 1px dashed var(--rim); vertical-align: top; }
   td.num { text-align: right; font: 14px var(--type); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* The route a round took on the end-of-day screen: each guess in order, misses struck
+     through with their distance, ending on the answer or "out of guesses". */
+  .route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 6px; font: 12.5px var(--type); }
+  .route .arr { color: var(--rim); }
+  .chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 1px 8px 2px; border-radius: 999px;
+    border: 1px solid var(--rim); white-space: nowrap; }
+  .chip.miss { color: #ff8a7d; border-color: var(--tried); text-decoration: line-through; text-decoration-color: rgba(255, 138, 125, 0.55); }
+  .chip.miss small { color: var(--muted); font-size: 11px; }
+  .chip.hit { color: var(--bg); background: var(--glow); border-color: var(--glow); font-weight: 700; }
+  .chip.end { color: var(--muted); border-style: dashed; }
 
   /* globe.gl wraps labels in its own grey box; hide it so only .tip shows. The id outranks
      the library's stylesheet, which it adds after this one. */
@@ -254,7 +271,8 @@
     #skip { padding: 11px 14px; flex: none; }
     #guess { width: auto !important; flex: 1; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #pick { order: 1; flex-basis: 100%; margin: 0; min-height: 0; text-align: center; }
-    body.revealed #pick { display: none; }
+    #tries { order: 1; flex-basis: 100%; margin: 0; text-align: center; }
+    body.revealed #pick, body.revealed #tries { display: none; }
     #error { flex-basis: 100%; margin-top: 0; }
     body.revealed #skip, body.revealed #time, body.revealed #lamp { display: none; }
     body.revealed #mapbtn { display: block; flex: none; padding: 11px 14px; }
@@ -317,7 +335,7 @@
   <div id="play-area">
     <div id="player-wrap">
       <div id="player"></div>
-      <div id="cover"><div class="note">♪</div><div>Hidden until you guess</div></div>
+      <div id="cover"><div class="note">♪</div><div>Hidden until the round ends</div></div>
     </div>
     <div id="controls">
       <div class="row spread">
@@ -326,10 +344,11 @@
           <span id="time">0:00</span>
           <span id="lamp" class="lamp" title="On air"></span>
         </div>
-        <button id="skip" title="Give up on this round (0 points)" disabled>Skip</button>
+        <button id="skip" title="Give up on this round and see the answer (0 points)" disabled>Skip</button>
         <button id="mapbtn" type="button">Show map</button>
       </div>
       <div id="pick" class="sub">Spin the globe and click the country you think this song is from.</div>
+      <div id="tries" aria-live="polite"></div>
       <button id="guess" class="primary" style="width:100%" disabled>Guess</button>
       <div id="error" class="msg"></div>
     </div>
@@ -351,6 +370,9 @@ const GEOJSON = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master
 const PUZZLES = "../puzzles/";
 const MAX_POINTS = 5000;
 const SCALE_KM = 2000; // points fall to ~37% at 2,000 km
+const MAX_GUESSES = 3;
+const SOLVED_POINTS = [5000, 3000, 1500]; // the right country on guess 1, 2 or 3
+const MISS_FACTOR = 0.3; // after 3 misses: this share of the closest guess's distance points
 
 // French overseas departments are drawn as part of France; split them into their own countries.
 const OVERSEAS = { GF: [-53.1, 3.9, "French Guiana"], GP: [-61.5, 16.2, "Guadeloupe"],
@@ -366,10 +388,10 @@ const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
 // All page state: country shapes (and by ISO code), the hovered and selected country,
-// the loaded puzzle, the current round, results so far, and the YouTube player.
+// the loaded puzzle, the current round, this round's guesses, results so far, and the YouTube player.
 const S = {
   features: [], byCode: new Map(), hover: null, selected: null, dragging: false,
-  puzzle: null, round: 0, results: [], answered: false,
+  puzzle: null, round: 0, guesses: [], results: [], answered: false,
   player: null, playerReady: false, ytReady: false,
 };
 
@@ -439,11 +461,35 @@ function distanceKm(a, b) {
   return d3.geoDistance([a.lng, a.lat], [b.lng, b.lat]) * 6371;
 }
 
-// { km, points } for a guessed country code against the answer's centre point.
-function score(guessCode, answer) {
-  if (guessCode === answer.code) return { km: 0, points: MAX_POINTS };
-  const km = distanceKm(S.byCode.get(guessCode).properties, answer);
-  return { km, points: Math.round(MAX_POINTS * Math.exp(-km / SCALE_KM)) };
+// Initial compass bearing from one centre point to another, in degrees (0 = north, 90 = east).
+function bearing(a, b) {
+  const rad = Math.PI / 180, dLng = (b.lng - a.lng) * rad;
+  const y = Math.sin(dLng) * Math.cos(b.lat * rad);
+  const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) - Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos(dLng);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+
+// The nearest of the 8 compass points to a bearing, as an arrow and a label ("↗ NE").
+function compass(deg) {
+  const i = Math.round(deg / 45) % 8;
+  return `${"↑↗→↘↓↙←↖"[i]} ${["N", "NE", "E", "SE", "S", "SW", "W", "NW"][i]}`;
+}
+
+// One guess against the answer's centre point: { code, name, km, dir }, where dir is the
+// compass direction from the guess to the answer (null when right).
+function judge(guessCode, answer) {
+  const g = S.byCode.get(guessCode).properties;
+  if (guessCode === answer.code) return { code: guessCode, name: g.name, km: 0, dir: null };
+  return { code: guessCode, name: g.name, km: distanceKm(g, answer), dir: compass(bearing(g, answer)) };
+}
+
+// { km, points, solvedOn } for a finished round's guesses: SOLVED_POINTS if the last one is
+// right, else MISS_FACTOR of the distance points of the closest one (km is that guess's).
+function roundScore(guesses) {
+  const last = guesses[guesses.length - 1];
+  if (last.km === 0) return { km: 0, points: SOLVED_POINTS[guesses.length - 1], solvedOn: guesses.length };
+  const km = Math.min(...guesses.map(g => g.km));
+  return { km, points: Math.round(MISS_FACTOR * MAX_POINTS * Math.exp(-km / SCALE_KM)), solvedOn: null };
 }
 
 // ---------- globe ----------
@@ -453,16 +499,18 @@ let world;  // the globe.gl instance
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const C = {};
 function readColors() {
-  for (const k of ["glow", "good", "bad", "selected", "hover", "land", "land-edge", "ocean", "grid"]) C[k] = css(`--${k}`);
+  for (const k of ["glow", "good", "bad", "tried", "selected", "hover", "land", "land-edge", "ocean", "grid"]) C[k] = css(`--${k}`);
 }
 
-// Colour of a country: after a guess, amber = answer and red = your wrong guess;
-// before, red = selected and light brown = hovered.
+// Colour of a country: after the round, amber = answer and red = your wrong guesses;
+// during it, dark red = a miss so far, red = selected and light brown = hovered.
 function landColor(f) {
+  const tried = S.puzzle && S.guesses.some(g => g.code === f.properties.code);
   if (S.answered) {
     if (f.properties.code === currentRound().country) return C.good;
-    if (f === S.selected) return C.bad;
+    if (tried) return C.bad;
   }
+  if (tried) return C.tried;
   if (f === S.selected) return C.selected;
   if (f === S.hover) return C.hover;
   return C.land;
@@ -561,6 +609,7 @@ function initGlobe() {
     })
     .onPolygonClick(f => {
       if (!S.puzzle || S.answered || !f.properties.code) return;
+      if (S.guesses.some(g => g.code === f.properties.code)) return; // already missed this round
       S.selected = f;
       $("pick").innerHTML = `Your guess: <b>${f.properties.name}</b>`;
       $("guess").disabled = false;
@@ -651,18 +700,19 @@ function stampsHtml() {
   return S.puzzle.rounds.map((r, i) => {
     const x = S.results[i];
     if (!x) return `<div class="stamp${i === S.round && !S.answered ? " now" : ""}" title="Round ${i + 1}">${i + 1}</div>`;
-    return `<div class="stamp done${x.guess ? "" : " skipped"}" title="Round ${i + 1}: ${r.country_name}, ${x.points.toLocaleString()} points">
+    return `<div class="stamp done${x.skipped ? " skipped" : ""}" title="Round ${i + 1}: ${r.country_name}, ${x.points.toLocaleString()} points">
       <div><div class="cc">${r.country}</div>${x.points.toLocaleString()}</div></div>`;
   }).join("");
 }
 
 // Reset the panel and globe for the current round, with the player covered.
 function startRound() {
-  S.answered = false; S.selected = null;
+  S.answered = false; S.selected = null; S.guesses = [];
   $("round-label").textContent = `${S.puzzle.date} · Round ${S.round + 1} of ${S.puzzle.rounds.length}`;
   $("cover").hidden = false;
   $("pick").textContent = `Spin the globe and ${noHover.matches ? "tap" : "click"} the country you think this song is from.`;
-  $("guess").disabled = true; $("guess").textContent = "Guess"; $("guess").onclick = submitGuess;
+  $("tries").innerHTML = "";
+  $("guess").disabled = true; setGuessLabel(); $("guess").onclick = submitGuess;
   $("skip").disabled = false;
   $("result").innerHTML = ""; $("error").textContent = ""; $("time").textContent = "0:00";
   document.body.classList.remove("revealed", "map-view"); $("mapbtn").textContent = "Show map";
@@ -676,23 +726,37 @@ function startRound() {
   cueRound();
 }
 
-// Score the guess (null = skipped), reveal the song and the answer, fly the globe to it,
-// and turn the Guess button into "Next round" (or "See your score" after the last round).
-function finishRound(guessCode) {
+// The Guess button, with the guesses left this round.
+function setGuessLabel() {
+  const left = MAX_GUESSES - S.guesses.length;
+  $("guess").textContent = `Guess · ${left} left`;
+}
+
+// The misses so far this round, one line each: country, distance and direction to the answer.
+function renderTries() {
+  $("tries").innerHTML = S.guesses.filter(g => g.km > 0).map(g =>
+    `<div><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
+}
+
+// Score the round (skipped = true for Skip, 0 points), reveal the song and the answer, fly the
+// globe to it, and turn the Guess button into "Next round" (or "See your score" after the last round).
+function finishRound(skipped = false) {
   const r = currentRound();
   const ans = S.byCode.get(r.country)?.properties;
-  S.answered = true;
+  S.answered = true; S.selected = null;
   if (S.player && S.player.pauseVideo) S.player.pauseVideo();
   $("cover").hidden = true;
   $("skip").disabled = true;
 
-  const res = guessCode && ans ? score(guessCode, ans) : { km: null, points: 0 };
-  S.results.push({ round: r, guess: guessCode, ...res });
+  const res = skipped || !S.guesses.length || !ans ? { km: null, points: 0, solvedOn: null } : roundScore(S.guesses);
+  S.results.push({ round: r, guesses: S.guesses, skipped, ...res });
 
-  const guessName = guessCode ? S.byCode.get(guessCode).properties.name : null;
-  const verdict = res.points === MAX_POINTS ? "Spot on!"
-    : guessCode ? `You said ${guessName} · ${Math.round(res.km).toLocaleString()} km off`
-    : "Skipped";
+  const closest = S.guesses.find(g => g.km === res.km);
+  const verdict = skipped ? "Skipped"
+    : res.solvedOn === 1 ? "Spot on!"
+    : res.solvedOn ? `Got it on guess ${res.solvedOn}`
+    : closest ? `Closest: ${closest.name} · ${Math.round(res.km).toLocaleString()} km off`
+    : "No score";
   $("result").innerHTML = `
     <div class="pc-top"><div class="pc-from"><small>Greetings from</small>${r.country_name}</div><span class="par-avion">Par avion</span></div>
     <div class="notes"><span class="song">${r.title}</span><span>${r.artist}</span></div>
@@ -701,16 +765,18 @@ function finishRound(guessCode) {
     <div><a href="${r.artist_link}" target="_blank" rel="noopener">MusicBrainz</a> ·
       <a href="${r.youtube_url}" target="_blank" rel="noopener">YouTube</a></div>
     <div class="postmark" aria-hidden="true">${postmark(r.country_name, S.puzzle.date)}</div>`;
+  renderTries();
   renderStamps();
   revealCard();
 
   if (ans) {
-    if (guessCode && guessCode !== r.country) {
-      const g = S.byCode.get(guessCode).properties;
-      world.arcsData([{ startLat: g.lat, startLng: g.lng, endLat: ans.lat, endLng: ans.lng }])
-        .arcColor(() => [C.bad, C.good]).arcStroke(0.7)
-        .arcDashLength(0.5).arcDashGap(0.15).arcDashAnimateTime(1800);
-    }
+    // An arc from each wrong guess to the answer.
+    world.arcsData(S.guesses.filter(g => g.km > 0).map(g => {
+      const p = S.byCode.get(g.code).properties;
+      return { startLat: p.lat, startLng: p.lng, endLat: ans.lat, endLng: ans.lng };
+    }))
+      .arcColor(() => [C.bad, C.good]).arcStroke(0.7)
+      .arcDashLength(0.5).arcDashGap(0.15).arcDashAnimateTime(1800);
     world.controls().autoRotate = false;
     world.pointOfView({ lat: ans.lat, lng: ans.lng, altitude: phone.matches ? PHONE_ALTITUDE : 1.9 }, 1200);
   }
@@ -722,14 +788,69 @@ function finishRound(guessCode) {
   $("guess").onclick = last ? showSummary : () => { S.round++; startRound(); };
 }
 
-function submitGuess() { if (S.selected) finishRound(S.selected.properties.code); }
+// Record the selected country as a guess. A right guess or the last one ends the round;
+// a miss is listed with its distance and direction, and the song stays covered (and playing).
+function submitGuess() {
+  if (!S.selected) return;
+  const ans = S.byCode.get(currentRound().country)?.properties;
+  if (!ans) { finishRound(); return; } // no shape for the answer: can't judge, so no score
+  const g = judge(S.selected.properties.code, ans);
+  S.guesses.push(g);
+  if (g.km === 0 || S.guesses.length === MAX_GUESSES) { finishRound(); return; }
+  S.selected = null;
+  renderTries();
+  const left = MAX_GUESSES - S.guesses.length;
+  $("pick").innerHTML = `Not ${g.name}. Pick again: ${left} ${left === 1 ? "guess" : "guesses"} left.`;
+  $("guess").disabled = true; setGuessLabel();
+  refreshGlobe();
+}
 
-// The end-of-day screen: total score and a row per round.
+// The Wordle-style result to share: per round a 🚫 for each wrong guess, then ✅ if solved,
+// then the total and the site address.
+function shareText(total) {
+  const rows = S.results.map((x, i) => `Round ${i + 1}: `
+    + "🚫".repeat(x.guesses.filter(g => g.km > 0).length)
+    + (x.solvedOn ? "✅" : ""));
+  return [...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
+    "Can you do better?", "svm1.github.io/rove-fm"].join("\n");
+}
+
+// Copy text to the clipboard; falls back to execCommand where the Clipboard API is missing
+// (plain-http pages other than localhost).
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta = Object.assign(document.createElement("textarea"), { value: text });
+  ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  return ok ? Promise.resolve() : Promise.reject(new Error("copy failed"));
+}
+
+// Show a short confirmation on a button, then restore its label.
+function flashLabel(btn, label) {
+  const orig = btn.dataset.label ??= btn.textContent;
+  btn.textContent = label;
+  clearTimeout(btn._flash);
+  btn._flash = setTimeout(() => { btn.textContent = orig; }, 1500);
+}
+
+// HTML for a finished round's guesses in order: misses struck through with their distance, then
+// the answer, or "out of guesses" (or "Skipped") when it wasn't found.
+function routeHtml(x) {
+  const chips = x.guesses.map(g => g.km === 0
+    ? `<span class="chip hit">✓ ${g.name}</span>`
+    : `<span class="chip miss">${g.name} <small>${Math.round(g.km).toLocaleString()} km</small></span>`);
+  if (x.skipped) chips.push(`<span class="chip end">Skipped</span>`);
+  else if (!x.solvedOn) chips.push(`<span class="chip end">out of guesses</span>`);
+  return `<div class="route">${chips.join('<span class="arr">→</span>')}</div>`;
+}
+
+// The end-of-day screen: total score and a row per round, with the route of guesses it took.
 function showSummary() {
   const total = S.results.reduce((s, r) => s + r.points, 0);
   const rows = S.results.map((x, i) => `
-    <tr><td>${i + 1}. <b>${x.round.country_name}</b><br><span class="sub">${x.round.artist} – ${x.round.title}</span></td>
-    <td class="num">${x.km === null ? "–" : x.km === 0 ? "✓" : Math.round(x.km).toLocaleString() + " km"}</td>
+    <tr><td>${i + 1}. <b>${x.round.country_name}</b><br><span class="sub">${x.round.artist} – ${x.round.title}</span>${routeHtml(x)}</td>
     <td class="num">${x.points.toLocaleString()}</td></tr>`).join("");
   $("play-area").hidden = true;
   $("result").innerHTML = "";
@@ -745,8 +866,9 @@ function showSummary() {
       </div>
     </div>
     <table>${rows}</table>
-    <button id="again" style="margin-top:14px;width:100%">Play this day again</button>`;
-  $("again").onclick = () => loadPuzzle($("date").value);
+    <button id="share" style="margin-top:14px;width:100%">Share Score</button>`;
+  $("share").onclick = () => copyText(shareText(total)).then(
+    () => flashLabel($("share"), "Copied!"), () => flashLabel($("share"), "Couldn't copy"));
   $("round-label").textContent = `${S.puzzle.date} · Finished`;
   world.arcsData([]); world.controls().autoRotate = true;
   if (S.player && S.player.stopVideo) S.player.stopVideo();
@@ -846,7 +968,7 @@ async function init() {
     if (!S.playerReady) return;
     S.player.getPlayerState() === YT.PlayerState.PLAYING ? S.player.pauseVideo() : S.player.playVideo();
   };
-  $("skip").onclick = () => finishRound(null);
+  $("skip").onclick = () => finishRound(true);
   await loadPuzzle(pick);
 }
 
