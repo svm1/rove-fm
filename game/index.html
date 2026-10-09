@@ -61,6 +61,7 @@
     --good: #ffb347;             /* the answer */
     --bad: #c8453a;              /* a wrong guess, after the round */
     --tried: #6e2f27;            /* a wrong guess, while the round goes on */
+    --flash: #ff4a3a;            /* a wrong guess blinking, just after it's made */
     --land: #4a3726;
     --land-edge: #2a1e14;
     --ocean: #1d1611;
@@ -400,10 +401,14 @@
     to { opacity: 1; transform: rotate(-14deg); }
   }
   @keyframes jolt { 0%, 100% { transform: none; } 30% { transform: translateY(4px); } 60% { transform: translateY(-2px); } }
+  /* A wrong guess: the new hint line slides in flashing red (missFeedback). */
+  #tries .fresh { animation: miss-in 0.6s ease-out; }
+  @keyframes miss-in { 0% { transform: translateX(-8px); opacity: 0; color: #ff8a7d; } 25% { opacity: 1; color: #ffb0a6; }
+    100% { transform: none; color: var(--muted); } }
   @media (prefers-reduced-motion: reduce) {
     .needle, #unfold, body.ready #panel::before, body.ready #radio, #globe { transition: none; }
     #loading { animation: none; }
-    .postcard.slam, .postcard.slam .postmark, #globe-area.jolt { animation: none; }
+    .postcard.slam, .postcard.slam .postmark, #globe-area.jolt, #tries .fresh { animation: none; }
   }
 </style>
 </head>
@@ -654,7 +659,7 @@ let world;  // the globe.gl instance
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const C = {};
 function readColors() {
-  for (const k of ["glow", "good", "bad", "tried", "selected", "hover", "land", "land-edge", "ocean", "grid"]) C[k] = css(`--${k}`);
+  for (const k of ["glow", "good", "bad", "tried", "selected", "hover", "land", "land-edge", "ocean", "grid", "flash"]) C[k] = css(`--${k}`);
 }
 
 // Colour of a country: after the round, amber = answer and red = your wrong guesses;
@@ -665,7 +670,7 @@ function landColor(f) {
     if (f.properties.code === currentRound().country) return C.good;
     if (tried) return C.bad;
   }
-  if (tried) return C.tried;
+  if (tried) return S.flash === f.properties.code ? C.flash : C.tried;
   if (f === S.selected) return C.selected;
   if (f === S.hover) return C.hover;
   return C.land;
@@ -938,10 +943,17 @@ function setGuessLabel() {
 }
 
 // The misses so far this round, one line each: country, distance and direction to the answer.
-// They take the instructions' place in the prompt (CSS).
-function renderTries() {
-  $("tries").innerHTML = S.guesses.filter(g => g.km > 0).map(g =>
-    `<div><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
+// They take the instructions' place in the prompt (CSS). fresh: animate the newest line in.
+function renderTries(fresh = false) {
+  const misses = S.guesses.filter(g => g.km > 0);
+  $("tries").innerHTML = misses.map((g, i) =>
+    `<div${fresh && i === misses.length - 1 ? ' class="fresh"' : ""}><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
+}
+
+// A wrong guess: blink the missed country bright red twice (the new hint line slides in too:
+// renderTries with fresh).
+function missFeedback(code) {
+  [0, 140, 280, 420].forEach((ms, i) => setTimeout(() => { S.flash = i % 2 ? null : code; refreshGlobe(); }, ms));
 }
 
 // Score the round, reveal the song and the answer, fly the globe to it, and turn the Guess
@@ -1005,9 +1017,10 @@ function submitGuess() {
   S.guesses.push(g);
   if (g.km === 0 || S.guesses.length === MAX_GUESSES) { finishRound(); return; }
   S.selected = null;
-  renderTries();
+  renderTries(true);
   $("guess").disabled = true; setGuessLabel();
   refreshGlobe();
+  missFeedback(g.code);
 }
 
 // The Wordle-style result to share: per round a 🚫 for each wrong guess, then ✅ if solved,
