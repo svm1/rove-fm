@@ -259,6 +259,10 @@
   .total .big .of { font-size: 15px; color: var(--muted); font-weight: 400; }
   table { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 14px; }
   td { padding: 6px 2px; border-bottom: 1px dashed var(--rim); vertical-align: top; }
+  /* The end-of-day screen: each round's "artist – song" links to its YouTube video. */
+  .song-link { color: var(--muted); text-decoration: underline; text-decoration-color: rgba(181, 156, 123, 0.4);
+    text-underline-offset: 3px; }
+  .song-link:hover { color: var(--text); text-decoration-color: var(--glow); }
   td.num { text-align: right; font: 14px var(--type); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* The route a round took on the end-of-day screen: each guess in order, misses struck
      through with their distance, ending on the answer or "out of guesses". */
@@ -1105,7 +1109,7 @@ function routeHtml(x) {
 function showSummary() {
   const total = S.results.reduce((s, r) => s + r.points, 0);
   const rows = S.results.map((x, i) => `
-    <tr><td>${i + 1}. <b>${x.round.country_name}</b><br><span class="sub">${x.round.artist} – ${x.round.title}</span>${routeHtml(x)}</td>
+    <tr><td>${i + 1}. <b>${x.round.country_name}</b><br><a class="sub song-link" href="${x.round.youtube_url}" target="_blank" rel="noopener">${x.round.artist} – ${x.round.title}</a>${routeHtml(x)}</td>
     <td class="num">${x.points.toLocaleString()}</td></tr>`).join("");
   $("play-area").hidden = true;
   $("result").innerHTML = "";
