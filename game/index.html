@@ -1301,7 +1301,8 @@ function markReady(force = false) {
 
 
 // Start-up: load the map, draw the globe, fill the date menu from puzzles/index.json,
-// wire up the buttons, and open today's puzzle (or the latest one before today).
+// wire up the buttons, and open today's puzzle (or the latest one before today). Future
+// days are left out of the menu.
 async function init() {
   try {
     await loadCountries();
@@ -1315,7 +1316,10 @@ async function init() {
   try { dates = (await (await fetch(`${PUZZLES}index.json`)).json()).dates; } catch (e) {}
   if (!dates.length) { $("error").textContent = "No puzzles found. Run: python make_puzzle.py"; markReady(true); return; }
   const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local time
-  const pick = dates.includes(today) ? today : (dates.filter(d => d <= today).pop() || dates[0]);
+  // Future days stay out of the menu (their files are still public on the site).
+  dates = dates.filter(d => d <= today);
+  if (!dates.length) { $("error").textContent = "No puzzle yet. Come back tomorrow."; markReady(true); return; }
+  const pick = dates[dates.length - 1];
   $("date").innerHTML = dates.map(d => `<option ${d === pick ? "selected" : ""}>${d}</option>`).join("");
   $("date").onchange = e => { document.body.classList.remove("menu-open"); $("menu").setAttribute("aria-expanded", "false"); loadPuzzle(e.target.value); };
   $("menu").onclick = () => {
