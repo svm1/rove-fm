@@ -4,10 +4,11 @@
 
   Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 3 rounds. In each
   round the player listens to a song, whose YouTube player is covered until the round ends,
-  and has up to 3 guesses to select the country on a spinnable globe; each miss shows its
-  distance and compass direction to the answer. Score: 5,000 / 3,000 / 1,500 for the right
-  country on guess 1 / 2 / 3; after 3 misses, 0.3 × 5000 × e^(−km / 2000) for the closest
-  guess, with km between country centre points.
+  and has up to 3 guesses to select the country on a spinnable globe; each miss shows how many
+  border hops it is from the answer (fewest crossings over land and sea neighbours, borders.js),
+  plus the compass direction from 4 hops on. Score: 5,000 / 4,000 / 3,000 for the right
+  country on guess 1 / 2 / 3; after 3 misses, 5000 / (hops + 1) for the closest guess (fewest
+  hops), so at most 2,500 for a neighbour.
 
   Run: `python3 -m http.server 8000` in the repo folder, then open http://localhost:8000/game/.
   Loads d3 and globe.gl from jsDelivr, the Natural Earth 1:50m country shapes, fonts from
@@ -20,7 +21,7 @@
   region below it, so it can never overlap the box. On phones (max-width: 640px) the globe
   sits between a slim header and the radio as a dock at the bottom.
 
-  Script layout: geography (map data -> clickable countries, distances, scoring),
+  Script layout: geography (map data -> clickable countries, border hops, distances, scoring),
   globe (drawing, hover, clicks), YouTube (player), rounds (guess -> reveal -> next),
   phone layout (reveal animation, player placement), puzzles (loading a day, start-up).
 -->
@@ -544,14 +545,13 @@ addEventListener("resize", alignEdges);
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/globe.gl@2"></script>
 <script src="timezones.js"></script>
+<script src="borders.js"></script>
 <script>
 const GEOJSON = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_0_countries.geojson";
 const PUZZLES = "../puzzles/";
 const MAX_POINTS = 5000;
-const SCALE_KM = 2000; // points fall to ~37% at 2,000 km
 const MAX_GUESSES = 3;
-const SOLVED_POINTS = [5000, 3000, 1500]; // the right country on guess 1, 2 or 3
-const MISS_FACTOR = 0.3; // after 3 misses: this share of the closest guess's distance points
+const SOLVED_POINTS = [5000, 4000, 3000]; // the right country on guess 1, 2 or 3
 
 // French overseas departments are drawn as part of France; split them into their own countries.
 const OVERSEAS = { GF: [-53.1, 3.9, "French Guiana"], GP: [-61.5, 16.2, "Guadeloupe"],
@@ -656,21 +656,54 @@ function compass(deg) {
   return `${"↑↗→↘↓↙←↖"[i]} ${["N", "NE", "E", "SE", "S", "SW", "W", "NW"][i]}`;
 }
 
-// One guess against the answer's centre point: { code, name, km, dir }, where dir is the
-// compass direction from the guess to the answer (null when right).
-function judge(guessCode, answer) {
-  const g = S.byCode.get(guessCode).properties;
-  if (guessCode === answer.code) return { code: guessCode, name: g.name, km: 0, dir: null };
-  return { code: guessCode, name: g.name, km: distanceKm(g, answer), dir: compass(bearing(g, answer)) };
+// Fewest border crossings from one country to another (BORDERS: land and sea neighbours),
+// by breadth-first search; 0 for the same country, Infinity when no path connects them.
+function hops(from, to) {
+  if (from === to) return 0;
+  const dist = new Map([[from, 0]]), queue = [from];
+  for (let i = 0; i < queue.length; i++) {
+    const d = dist.get(queue[i]) + 1;
+    for (const n of BORDERS[queue[i]] || []) {
+      if (n === to) return d;
+      if (!dist.has(n)) { dist.set(n, d); queue.push(n); }
+    }
+  }
+  return Infinity;
 }
 
-// { km, points, solvedOn } for a finished round's guesses: SOLVED_POINTS if the last one is
-// right, else MISS_FACTOR of the distance points of the closest one (km is that guess's).
+// A miss's distance in words: "1 border away", "5 borders away" or "no route".
+function hopsText(h) {
+  return h === Infinity ? "no route" : `${h} border${h === 1 ? "" : "s"} away`;
+}
+
+// One guess against the answer: { code, name, hit, hops, km, dir }, where hops are border hops
+// to the answer, km the distance between centre points and dir the compass direction from the
+// guess to the answer (null when right).
+function judge(guessCode, answer) {
+  const g = S.byCode.get(guessCode).properties;
+  if (guessCode === answer.code) return { code: guessCode, name: g.name, hit: true, hops: 0, km: 0, dir: null };
+  return { code: guessCode, name: g.name, hit: false, hops: hops(guessCode, answer.code),
+           km: distanceKm(g, answer), dir: compass(bearing(g, answer)) };
+}
+
+// The closest of a round's guesses: fewest border hops, then fewest km.
+function closestGuess(guesses) {
+  return guesses.reduce((a, b) => b.hops < a.hops || (b.hops === a.hops && b.km < a.km) ? b : a);
+}
+
+// A miss's points h border hops from the answer: MAX_POINTS / (h + 1), so 2,500 for a
+// neighbour, falling steeply over the first hops and then flattening; 0 with no route.
+function incorrectScore(h) {
+  return Math.round(MAX_POINTS / (h + 1));
+}
+
+// { closest, points, solvedOn } for a finished round's guesses: SOLVED_POINTS if the last one
+// is right, else the incorrect score of the closest one (the greatest of the three).
 function roundScore(guesses) {
   const last = guesses[guesses.length - 1];
-  if (last.km === 0) return { km: 0, points: SOLVED_POINTS[guesses.length - 1], solvedOn: guesses.length };
-  const km = Math.min(...guesses.map(g => g.km));
-  return { km, points: Math.round(MISS_FACTOR * MAX_POINTS * Math.exp(-km / SCALE_KM)), solvedOn: null };
+  if (last.hit) return { closest: last, points: SOLVED_POINTS[guesses.length - 1], solvedOn: guesses.length };
+  const closest = closestGuess(guesses);
+  return { closest, points: incorrectScore(closest.hops), solvedOn: null };
 }
 
 // ---------- globe ----------
@@ -989,12 +1022,13 @@ function setGuessLabel() {
   $("guess").textContent = `Guess${S.selected ? ` ${S.selected.properties.name}` : ""} · ${left} left`;
 }
 
-// The misses so far this round, one line each: country, distance and direction to the answer.
+// The misses so far this round, one line each: country, border hops to the answer and, from
+// 4 hops on (where "which way" helps more than nearby counting), the compass direction.
 // They take the instructions' place in the prompt (CSS). fresh: animate the newest line in.
 function renderTries(fresh = false) {
-  const misses = S.guesses.filter(g => g.km > 0);
+  const misses = S.guesses.filter(g => !g.hit);
   $("tries").innerHTML = misses.map((g, i) =>
-    `<div${fresh && i === misses.length - 1 ? ' class="fresh"' : ""}><span class="x">✗</span> ${g.name} · ${Math.round(g.km).toLocaleString()} km · ${g.dir}</div>`).join("");
+    `<div${fresh && i === misses.length - 1 ? ' class="fresh"' : ""}><span class="x">✗</span> ${g.name} · ${hopsText(g.hops)}${g.hops >= 4 ? ` · ${g.dir}` : ""}</div>`).join("");
 }
 
 // A wrong guess: blink the missed country bright red twice (the new hint line slides in too:
@@ -1013,13 +1047,12 @@ function finishRound() {
   if (S.player && S.player.pauseVideo) S.player.pauseVideo();
   $("cover").hidden = true;
 
-  const res = !S.guesses.length || !ans ? { km: null, points: 0, solvedOn: null } : roundScore(S.guesses);
+  const res = !S.guesses.length || !ans ? { closest: null, points: 0, solvedOn: null } : roundScore(S.guesses);
   S.results.push({ round: r, guesses: S.guesses, ...res });
 
-  const closest = S.guesses.find(g => g.km === res.km);
   const verdict = res.solvedOn === 1 ? "Spot on!"
     : res.solvedOn ? `Got it on guess ${res.solvedOn}`
-    : closest ? `Closest: ${closest.name} · ${Math.round(res.km).toLocaleString()} km off`
+    : res.closest ? `Closest: ${res.closest.name} · ${hopsText(res.closest.hops)}`
     : "No score";
   $("result").innerHTML = `
     <div class="pc-top"><div class="pc-from"><small>Greetings from</small>${r.country_name}</div><span class="par-avion">Par avion</span></div>
@@ -1037,7 +1070,7 @@ function finishRound() {
 
   if (ans) {
     // An arc from each wrong guess to the answer.
-    world.arcsData(S.guesses.filter(g => g.km > 0).map(g => {
+    world.arcsData(S.guesses.filter(g => !g.hit).map(g => {
       const p = S.byCode.get(g.code).properties;
       return { startLat: p.lat, startLng: p.lng, endLat: ans.lat, endLng: ans.lng };
     }))
@@ -1055,14 +1088,14 @@ function finishRound() {
 }
 
 // Record the selected country as a guess. A right guess or the last one ends the round;
-// a miss is listed with its distance and direction, and the song stays covered (and playing).
+// a miss is listed with its border hops (and direction), and the song stays covered (and playing).
 function submitGuess() {
   if (!S.selected) return;
   const ans = S.byCode.get(currentRound().country)?.properties;
   if (!ans) { finishRound(); return; } // no shape for the answer: can't judge, so no score
   const g = judge(S.selected.properties.code, ans);
   S.guesses.push(g);
-  if (g.km === 0 || S.guesses.length === MAX_GUESSES) { finishRound(); return; }
+  if (g.hit || S.guesses.length === MAX_GUESSES) { finishRound(); return; }
   S.selected = null;
   renderTries(true);
   $("guess").disabled = true; setGuessLabel();
@@ -1074,7 +1107,7 @@ function submitGuess() {
 // then the total and the site address.
 function shareText(total) {
   const rows = S.results.map((x, i) => `Round ${i + 1}: `
-    + "🚫".repeat(x.guesses.filter(g => g.km > 0).length)
+    + "🚫".repeat(x.guesses.filter(g => !g.hit).length)
     + (x.solvedOn ? "✅" : ""));
   return ["🌐 🎵 ROVE.FM 🎶 🌐", "", ...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
     "Can you do better?", "svm1.github.io/rove-fm"].join("\n");
@@ -1100,12 +1133,12 @@ function flashLabel(btn, label) {
   btn._flash = setTimeout(() => { btn.textContent = orig; }, 1500);
 }
 
-// HTML for a finished round's guesses in order: misses struck through with their distance, then
-// the answer, or "out of guesses" when it wasn't found.
+// HTML for a finished round's guesses in order: misses struck through with their border hops,
+// then the answer, or "out of guesses" when it wasn't found.
 function routeHtml(x) {
-  const chips = x.guesses.map(g => g.km === 0
+  const chips = x.guesses.map(g => g.hit
     ? `<span class="chip hit">✓ ${g.name}</span>`
-    : `<span class="chip miss">${g.name} <small>${Math.round(g.km).toLocaleString()} km</small></span>`);
+    : `<span class="chip miss">${g.name} <small>${g.hops === Infinity ? "no route" : `${g.hops} hop${g.hops === 1 ? "" : "s"}`}</small></span>`);
   if (!x.solvedOn) chips.push(`<span class="chip end">out of guesses</span>`);
   return `<div class="route">${chips.join('<span class="arr">→</span>')}</div>`;
 }
