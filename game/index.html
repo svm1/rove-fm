@@ -4,9 +4,10 @@
 
   Each day's puzzle (puzzles/<date>.json, built by make_puzzle.py) has 3 rounds. In each
   round the player listens to a song, whose YouTube player is covered until the round ends,
-  and has up to 3 guesses to select the country on a spinnable globe; each miss shows how many
-  border hops it is from the answer (fewest crossings over land and sea neighbours, borders.js),
-  plus the compass direction from 4 hops on. Score: 5,000 / 4,000 / 3,000 for the right
+  and has up to 3 guesses to select the country on a spinnable globe; each miss shows a bucket
+  for its border hops to the answer (fewest crossings over land and sea neighbours, borders.js):
+  BORDERS (1), HOT (2-4), Warm (5-7) or Cold (8+), with the compass direction for Warm and
+  Cold. Score: 5,000 / 4,000 / 3,000 for the right
   country on guess 1 / 2 / 3; after 3 misses, 5000 / (hops + 1) for the closest guess (fewest
   hops), so at most 2,500 for a neighbour.
 
@@ -676,6 +677,15 @@ function hopsText(h) {
   return h === Infinity ? "no route" : `${h} border${h === 1 ? "" : "s"} away`;
 }
 
+// A miss's hint bucket by border hops: 1 BORDERS, 2-4 HOT, 5-7 Warm, 8+ Cold (no route
+// included). far: the hint shows the compass direction too (Warm and Cold).
+function hintBucket(h) {
+  return h <= 1 ? { label: "BORDERS", far: false }
+    : h <= 4 ? { label: "HOT", far: false }
+    : h <= 7 ? { label: "Warm", far: true }
+    : { label: "Cold", far: true };
+}
+
 // One guess against the answer: { code, name, hit, hops, km, dir }, where hops are border hops
 // to the answer, km the distance between centre points and dir the compass direction from the
 // guess to the answer (null when right).
@@ -1022,13 +1032,15 @@ function setGuessLabel() {
   $("guess").textContent = `Guess${S.selected ? ` ${S.selected.properties.name}` : ""} · ${left} left`;
 }
 
-// The misses so far this round, one line each: country, border hops to the answer and, from
-// 4 hops on (where "which way" helps more than nearby counting), the compass direction.
+// The misses so far this round, one line each: country, its hint bucket (hintBucket) and, for
+// Warm and Cold (where "which way" helps more than closeness), the compass direction.
 // They take the instructions' place in the prompt (CSS). fresh: animate the newest line in.
 function renderTries(fresh = false) {
   const misses = S.guesses.filter(g => !g.hit);
-  $("tries").innerHTML = misses.map((g, i) =>
-    `<div${fresh && i === misses.length - 1 ? ' class="fresh"' : ""}><span class="x">✗</span> ${g.name} · ${hopsText(g.hops)}${g.hops >= 4 ? ` · ${g.dir}` : ""}</div>`).join("");
+  $("tries").innerHTML = misses.map((g, i) => {
+    const b = hintBucket(g.hops);
+    return `<div${fresh && i === misses.length - 1 ? ' class="fresh"' : ""}><span class="x">✗</span> ${g.name} · ${b.label}${b.far ? ` · ${g.dir}` : ""}</div>`;
+  }).join("");
 }
 
 // A wrong guess: blink the missed country bright red twice (the new hint line slides in too:
@@ -1088,7 +1100,7 @@ function finishRound() {
 }
 
 // Record the selected country as a guess. A right guess or the last one ends the round;
-// a miss is listed with its border hops (and direction), and the song stays covered (and playing).
+// a miss is listed with its hint bucket (and direction), and the song stays covered (and playing).
 function submitGuess() {
   if (!S.selected) return;
   const ans = S.byCode.get(currentRound().country)?.properties;
