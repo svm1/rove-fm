@@ -678,10 +678,10 @@ function hopsText(h) {
 }
 
 // A miss's hint bucket by border hops: 1 BORDERS, 2-4 HOT, 5-7 Warm, 8+ Cold (no route
-// included). far: the hint shows the compass direction too (Warm and Cold).
+// included). far: the hint shows the compass direction too (Hot, Warm, Cold).
 function hintBucket(h) {
   return h <= 1 ? { label: "BORDERS", far: false }
-    : h <= 4 ? { label: "HOT", far: false }
+    : h <= 4 ? { label: "HOT", far: true }
     : h <= 7 ? { label: "Warm", far: true }
     : { label: "Cold", far: true };
 }
