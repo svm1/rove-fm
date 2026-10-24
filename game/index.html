@@ -281,7 +281,7 @@
   /* The loading text fades in and out while the globe is built. */
   @keyframes breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
   /* Phone-only pieces, hidden on desktop. */
-  #menu, #mapbtn, .pc-video { display: none; }
+  #menu, #mapbtn, .pc-video, #docktab { display: none; }
 
   /* ---------- Phone layout (design/sketchbook.html, "Phone layouts") ----------
      Everything phone-specific is in this block, so desktop is untouched. A slim header with the
@@ -289,7 +289,7 @@
      reach, with the player as a thumbnail beside the prompt. #panel dissolves (display: contents)
      so its header and radio can sit at either end. The reveal postcard slams onto the globe, with
      the video in it: the YouTube player can't move in the page (that reloads it), so it is
-     positioned over the card's video slot, and the dock's slot stays empty. */
+     positioned over the card's video slot, and the dock's thumbnail row goes. */
   @media (max-width: 640px) {
     :root { --card-tilt: 1.2deg; }
     #panel { display: contents; }
@@ -334,22 +334,38 @@
     .dial-lamp { display: block; }
     .dial-time { display: block; position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
       font: 700 13px var(--type); color: var(--dial-ink); opacity: 0.85; }
-    /* The dial's lamp and time fade in with the rest when the game is ready. */
-    .dial-time { transition: opacity 0.45s 0.15s; }
+    /* The dial's lamp and time, and the dock's tab, fade in with the rest when the game is ready. */
+    .dial-time, #docktab { transition: opacity 0.45s 0.15s; }
     .dial-lamp { transition: opacity 0.45s 0.15s, background 0.3s, box-shadow 0.3s; }
-    body:not(.ready) :is(.dial-lamp, .dial-time) { opacity: 0; pointer-events: none; }
+    body:not(.ready) :is(.dial-lamp, .dial-time, #docktab) { opacity: 0; pointer-events: none; }
+    /* The dock's tab, at its top edge: it folds the dock down to the dial line, for more globe, and
+       back (body.dock-folded, foldDock). The chevron points the way the dock will go. */
+    #docktab { display: block; position: relative; width: 56px; height: 18px; margin: -6px auto 6px; padding: 0;
+      border: 0; border-radius: 9px; background: rgba(255, 255, 255, 0.06); }
+    #docktab::before { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px;
+      border: solid var(--muted); border-width: 0 2px 2px 0; transform: translate(-50%, -75%) rotate(45deg);
+      transition: transform 0.3s; }
+    body.dock-folded #docktab::before { transform: translate(-50%, -25%) rotate(-135deg); }
+    /* Folding: #unfold's one row shrinks from 1fr to 0fr (its contents clipped meanwhile), so the
+       globe's region grows; the globe is resized once the fold is over. The end-of-day page goes too. */
+    #unfold { display: grid; grid-template-rows: 1fr;
+      transition: clip-path 0.55s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s 0.1s ease-out, grid-template-rows 0.3s ease; }
+    #unfold > div { min-height: 0; }
+    body:is(.dock-folded, .dock-moving) #unfold > div { overflow: hidden; }
+    body.dock-folded #unfold { grid-template-rows: 0fr; }
+    body.dock-folded #summary { display: none; }
     /* The end-of-day screen has nothing to play: no lamp or time by the dial. */
     body.finished :is(.dial-lamp, .dial-time) { display: none; }
     .dial { height: 34px; margin-top: 0; padding: 4px 52px 3px 10px; border-radius: 7px; }
     .dial-row { font-size: 8.5px; }
     .ticks { height: 5px; background: repeating-linear-gradient(90deg, var(--dial-ink) 0 1px, transparent 1px 6px); }
     /* The dock below the dial, one row each: the player thumbnail, centred; the prompt centred
-       under it; then Guess (after the guess, Show map and Next round). The prompt keeps the misses
-       after the guess, so the dock keeps one height all round and the globe above it never
-       resizes. */
+       under it; then Guess (after the guess, Show map and Next round). While the postcard shows,
+       the player is on it and the thumbnail row goes; in map view it comes back with the video. */
     #play-area { --k: 0.8; --thumb: calc(260px * var(--k)); display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 10px;
       grid-template-areas: "thumb thumb" "prompt prompt" "guess guess" "error error"; }
     body.revealed #play-area { grid-template-areas: "thumb thumb" "prompt prompt" "map guess" "error error"; }
+    body.revealed:not(.map-view) #play-area { grid-template-areas: "prompt prompt" "map guess" "error error"; }
     #controls, #controls .row { display: contents; }
     #guess { grid-area: guess; width: auto !important; min-width: 0; padding: 12px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #prompt { grid-area: prompt; height: 42px; margin: 0; display: flex; flex-direction: column; justify-content: center; text-align: center; }
@@ -357,12 +373,9 @@
     #error { grid-area: error; margin-top: 0; }
     body.revealed #mapbtn { grid-area: map; display: block; padding: 11px 14px; }
 
-    /* The player as a thumbnail (the time and lamp are on the dial). Under it, an empty dark slot
-       (#play-area::before) for when the player is on the postcard. Once the card has landed,
+    /* The player as a thumbnail (the time and lamp are on the dial). Once the card has landed,
        placePlayer() lays the player over its video slot; until then it waits hidden behind the
        page. In map view it's back in the dock. */
-    #play-area::before { content: ""; grid-area: thumb; justify-self: center; width: var(--thumb); aspect-ratio: 16 / 9;
-      border-radius: 6px; border: 1px solid var(--rim); background: #1e140d; }
     #player-wrap { grid-area: thumb; justify-self: center; width: var(--thumb); border-radius: 6px; }
     /* The thumbnail is the desktop box (260 px) scaled by --k: the player is laid out at the
        desktop size and shrunk, so YouTube draws its title bar, play button and control bar as on
@@ -423,6 +436,7 @@
     </div>
   </div>
   <div id="radio">
+  <button id="docktab" type="button" aria-label="Hide the controls" aria-expanded="true"></button>
   <!-- Decoration: the real shortwave broadcast bands, as on old dials. No place names: they'd read as hints. -->
   <div class="dial-line">
     <span class="lamp dial-lamp" title="On air"></span>
@@ -696,6 +710,7 @@ function roundScore(guesses) {
 
 // ---------- globe ----------
 let world;  // the globe.gl instance
+let fitGlobe = () => {};  // sizes the globe to its region (set by initGlobe)
 // Colours come from the CSS variables in <style>, so the palette is defined once.
 // Read once at start-up; landColor runs for every country on every refresh.
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -854,13 +869,16 @@ function initGlobe() {
   // the finger lifts, and looked like a stutter.)
   world.controls().addEventListener("end", () => world.controls()._sphericalDelta?.set(0, 0, 0));
   refreshGlobe();
-  // Size the globe to its region, and keep it sized as the window or the game box changes.
+  // Size the globe to its region, and keep it sized as the window or the game box changes; not
+  // while the phone's dock folds (each frame would resize it), but once, when it's done (foldDock).
   let size = "";
   const fit = () => {
+    if (document.body.classList.contains("dock-moving")) return;
     const w = area.clientWidth, h = area.clientHeight;
     if (`${w}x${h}` !== size) { size = `${w}x${h}`; world.width(w).height(h); }
   };
   new ResizeObserver(fit).observe(area);
+  fitGlobe = fit;
   fit();
   whenGlobeDrawn(() => {
     $("loading").remove();
@@ -1172,6 +1190,19 @@ function revealCard() {
   else placePlayer();
 }
 
+// Phones: fold the dock down to its tab and dial line (fold true), for more globe, or open it
+// again. The fold takes 0.3 s (CSS); the globe is resized once, after it.
+let foldTimer;
+function foldDock(fold) {
+  const b = document.body;
+  b.classList.add("dock-moving");
+  b.classList.toggle("dock-folded", fold);
+  $("docktab").setAttribute("aria-expanded", String(!fold));
+  $("docktab").setAttribute("aria-label", fold ? "Show the controls" : "Hide the controls");
+  clearTimeout(foldTimer);
+  foldTimer = setTimeout(() => { b.classList.remove("dock-moving"); fitGlobe(); }, 320);
+}
+
 // On phones after a guess, lay the YouTube player over the postcard's video slot (the player
 // can't be moved in the page without reloading it). Otherwise leave it where the CSS puts it.
 function placePlayer() {
@@ -1250,6 +1281,7 @@ async function init() {
     const open = document.body.classList.toggle("menu-open");
     $("menu").setAttribute("aria-expanded", String(open));
   };
+  $("docktab").onclick = () => foldDock(!document.body.classList.contains("dock-folded"));
   // Phones: tuck the postcard away to look at the map, and bring it back.
   $("mapbtn").onclick = () => {
     const map = document.body.classList.toggle("map-view");
