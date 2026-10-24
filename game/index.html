@@ -545,7 +545,7 @@ const NAMES = { RU: "Russia", KR: "South Korea", KP: "North Korea", LA: "Laos", 
 const NO_CODE = { CYN: "CY", SOL: "SO" };
 
 const $ = id => document.getElementById(id);
-const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf (with &dpr=N)
+const PARAMS = new URLSearchParams(location.search); // ?date=YYYY-MM-DD, and debug switches: ?fonts, ?perf (with &dpr=N)
 // All page state: country shapes (and by ISO code), the hovered and selected country,
 // the loaded puzzle, its date and the latest day's, the current round, this round's guesses,
 // results so far, the YouTube player, and whether the globe has been drawn (the controls wait for it: markReady).
@@ -842,7 +842,7 @@ function initGlobe() {
   // upscaled the canvas and the borders looked fuzzy. The extra pixels are offset by the
   // border layer drawing only land borders (209 lines instead of ~1,600 outlines).
   // ?dpr=N (debug, with ?perf) overrides it to compare rendering costs.
-  world.renderer().setPixelRatio(+DEBUG.get("dpr") || Math.min(devicePixelRatio, 2));
+  world.renderer().setPixelRatio(+PARAMS.get("dpr") || Math.min(devicePixelRatio, 2));
   world.pointOfView({ ...homeView(), altitude: startAltitude() });
   world.controls().autoRotate = true;
   world.controls().autoRotateSpeed = -0.2; // the sign sets the direction
@@ -1076,14 +1076,14 @@ function submitGuess() {
 }
 
 // The Wordle-style result to share: per round a 🚫 for each wrong guess, then ✅ if solved,
-// then the total and the link to this puzzle (always with its date: the bare game/ address
+// then the total and the link to this puzzle (always with its date: plain game/
 // moves on to the next day's puzzle).
 function shareText(total) {
   const rows = S.results.map((x, i) => `Round ${i + 1}: `
     + "🚫".repeat(x.guesses.filter(g => !g.hit).length)
     + (x.solvedOn ? "✅" : ""));
   return ["🌐 🎵 ROVE.FM 🎶 🌐", "", ...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
-    "Can you do better?", `svm1.github.io/rove-fm/game/${S.date}`].join("\n");
+    "Can you do better?", `svm1.github.io/rove-fm/game/?date=${S.date}`].join("\n");
 }
 
 // Copy text to the clipboard; falls back to execCommand where the Clipboard API is missing
@@ -1187,8 +1187,7 @@ addEventListener("resize", placePlayer);
 phone.addEventListener("change", placePlayer);
 
 // ---------- puzzles ----------
-// Each puzzle has its own address, game/<date>; the latest is plain game/. The host has to
-// serve this page at game/<date> (GitHub Pages doesn't yet: it has no file there).
+// Each puzzle has its own address, game/?date=<date>; the latest is plain game/.
 
 // Load puzzles/<date>.json, put its address in the URL bar (keeping any debug parameters;
 // replaceState, so Back doesn't step through each day picked) and start its first round.
@@ -1202,7 +1201,8 @@ async function loadPuzzle(date) {
   }
   S.puzzle = await res.json();
   S.date = date;
-  history.replaceState(null, "", (date === S.latest ? "./" : date) + location.search);
+  if (date === S.latest) PARAMS.delete("date"); else PARAMS.set("date", date);
+  history.replaceState(null, "", String(PARAMS) ? `?${PARAMS}` : "./");
   S.round = 0; S.results = [];
   $("play-area").hidden = false; $("summary").hidden = true; document.body.classList.remove("finished");
   startRound();
@@ -1242,7 +1242,7 @@ async function init() {
   dates = dates.filter(d => d <= today);
   if (!dates.length) { $("error").textContent = "No puzzle yet. Come back tomorrow."; markReady(true); return; }
   S.latest = dates[dates.length - 1];
-  const asked = location.pathname.split("/").filter(Boolean).pop();
+  const asked = PARAMS.get("date");
   const pick = dates.includes(asked) ? asked : S.latest;
   $("date").innerHTML = dates.map(d => `<option ${d === pick ? "selected" : ""}>${d}</option>`).join("");
   $("date").onchange = e => { document.body.classList.remove("menu-open"); $("menu").setAttribute("aria-expanded", "false"); loadPuzzle(e.target.value); };
@@ -1269,7 +1269,7 @@ init();
 // globe's pixel ratio and canvas size; and a 3-second graph of frame time (amber) and of how far
 // the globe turned each frame (cyan). A stutter shows as a jagged cyan line. &dpr=N sets the
 // globe's pixel ratio.
-if (DEBUG.has("perf")) {
+if (PARAMS.has("perf")) {
   const box = document.createElement("div");
   box.style.cssText = "position:fixed;left:8px;top:8px;z-index:9999;pointer-events:none;padding:6px 8px;border-radius:6px;" +
     "background:rgba(0,0,0,0.78);color:#f1e3c6;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre";
@@ -1314,7 +1314,7 @@ if (DEBUG.has("perf")) {
 
 // Debug: open the page with ?fonts to try other fonts for the body text (--body), or for
 // the help line alone, from a menu in the bottom-left corner. The first entry is the current font.
-if (DEBUG.has("fonts")) {
+if (PARAMS.has("fonts")) {
   const BODY = css("--body");
   const FONTS = ["Newsreader", "Barlow Semi Condensed", "Libre Baskerville", "Old Standard TT", "Lora", "Crimson Pro"];
   const link = document.createElement("link");
