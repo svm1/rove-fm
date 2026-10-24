@@ -569,11 +569,11 @@ const NO_CODE = { CYN: "CY", SOL: "SO" };
 const $ = id => document.getElementById(id);
 const DEBUG = new URLSearchParams(location.search); // debug switches: ?fonts, ?perf (with &dpr=N)
 // All page state: country shapes (and by ISO code), the hovered and selected country,
-// the loaded puzzle, the current round, this round's guesses, results so far, the YouTube player,
-// and whether the globe has been drawn (the controls wait for it: markReady).
+// the loaded puzzle, its date and the latest day's, the current round, this round's guesses,
+// results so far, the YouTube player, and whether the globe has been drawn (the controls wait for it: markReady).
 const S = {
   features: [], byCode: new Map(), hover: null, selected: null, dragging: false,
-  puzzle: null, round: 0, guesses: [], results: [], answered: false,
+  puzzle: null, date: null, latest: null, round: 0, guesses: [], results: [], answered: false,
   player: null, playerReady: false, ytReady: false, globeDrawn: false,
 };
 
@@ -1116,13 +1116,14 @@ function submitGuess() {
 }
 
 // The Wordle-style result to share: per round a 🚫 for each wrong guess, then ✅ if solved,
-// then the total and the site address.
+// then the total and the link to this puzzle (always with its date: the bare game/ address
+// moves on to the next day's puzzle).
 function shareText(total) {
   const rows = S.results.map((x, i) => `Round ${i + 1}: `
     + "🚫".repeat(x.guesses.filter(g => !g.hit).length)
     + (x.solvedOn ? "✅" : ""));
   return ["🌐 🎵 ROVE.FM 🎶 🌐", "", ...rows, "", `TOTAL SCORE: ${total}/${MAX_POINTS * S.results.length}`,
-    "Can you do better?", "svm1.github.io/rove-fm"].join("\n");
+    "Can you do better?", `svm1.github.io/rove-fm/game/${S.date}`].join("\n");
 }
 
 // Copy text to the clipboard; falls back to execCommand where the Clipboard API is missing
@@ -1317,7 +1318,11 @@ addEventListener("resize", placePlayer);
 phone.addEventListener("change", placePlayer);
 
 // ---------- puzzles ----------
-// Load puzzles/<date>.json and start its first round.
+// Each puzzle has its own address, game/<date>; the latest is plain game/. The host has to
+// serve this page at game/<date> (GitHub Pages doesn't yet: it has no file there).
+
+// Load puzzles/<date>.json, put its address in the URL bar (keeping any debug parameters;
+// replaceState, so Back doesn't step through each day picked) and start its first round.
 async function loadPuzzle(date) {
   $("error").textContent = "";
   const res = await fetch(`${PUZZLES}${date}.json`);
@@ -1327,6 +1332,8 @@ async function loadPuzzle(date) {
     return;
   }
   S.puzzle = await res.json();
+  S.date = date;
+  history.replaceState(null, "", (date === S.latest ? "./" : date) + location.search);
   S.round = 0; S.results = [];
   $("play-area").hidden = false; $("summary").hidden = true; document.body.classList.remove("finished");
   startRound();
@@ -1346,8 +1353,9 @@ function markReady(force = false) {
 
 
 // Start-up: load the map, draw the globe, fill the date menu from puzzles/index.json,
-// wire up the buttons, and open today's puzzle (or the latest one before today). Future
-// days are left out of the menu.
+// wire up the buttons, and open the puzzle whose date is the URL's last path segment, else
+// today's (or the latest one before today). Future days are left out of the menu and can't be
+// opened by address.
 async function init() {
   try {
     await loadCountries();
@@ -1364,7 +1372,9 @@ async function init() {
   // Future days stay out of the menu (their files are still public on the site).
   dates = dates.filter(d => d <= today);
   if (!dates.length) { $("error").textContent = "No puzzle yet. Come back tomorrow."; markReady(true); return; }
-  const pick = dates[dates.length - 1];
+  S.latest = dates[dates.length - 1];
+  const asked = location.pathname.split("/").filter(Boolean).pop();
+  const pick = dates.includes(asked) ? asked : S.latest;
   $("date").innerHTML = dates.map(d => `<option ${d === pick ? "selected" : ""}>${d}</option>`).join("");
   $("date").onchange = e => { document.body.classList.remove("menu-open"); $("menu").setAttribute("aria-expanded", "false"); loadPuzzle(e.target.value); };
   $("menu").onclick = () => {
